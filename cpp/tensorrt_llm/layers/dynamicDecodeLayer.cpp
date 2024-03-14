@@ -583,7 +583,7 @@ void DynamicDecodeLayer<T>::banRepeatNGrams(Tensor& logits, OutputParams& output
 {
     TLLM_LOG_TRACE("%s start", __PRETTY_FUNCTION__);
     auto const max_step = params.step;
-    if (params.no_repeat_ngram_size)
+    if (params.no_repeat_ngram_size && max_step > 0)
     {
         int const* noRepeatNgramSizeBuf = params.no_repeat_ngram_size.value().template getPtr<int const>();
 
@@ -605,12 +605,21 @@ void DynamicDecodeLayer<T>::applyNGramPenalty(Tensor& logits, OutputParams& outp
     TLLM_LOG_TRACE("%s start", __PRETTY_FUNCTION__);
     auto const max_step = params.step;
 
-    invokeNgramPenalty(logits.template getPtr<T>(), outputs.output_ids_ptr.template getPtr<const int*>(),
-        reinterpret_cast<FinishedState*>(
-            params.finished.value_or(Tensor{}).template getPtr<FinishedState::UnderlyingType>()),
-        outputs.parent_ids_ptr.template getPtr<const int*>(), batchSlots,
-        outputs.sequence_length->template getPtr<int>(), batchSize, beamWidth, maxSeqLen,
-        vocabSizePadded, max_step, stream);
+    const char* env = std::getenv("TRTLLM_NGRAM_PENALTY");
+    if (env && std::string(env) == "false")
+    {
+        return;
+    }
+
+    if (max_step > 0)
+    {
+        invokeNgramPenalty(logits.template getPtr<T>(), outputs.output_ids_ptr.template getPtr<const int*>(),
+            reinterpret_cast<FinishedState*>(
+                params.finished.value_or(Tensor{}).template getPtr<FinishedState::UnderlyingType>()),
+            outputs.parent_ids_ptr.template getPtr<const int*>(), batchSlots,
+            outputs.sequence_length->template getPtr<int>(), batchSize, beamWidth, maxSeqLen,
+            vocabSizePadded, max_step, stream);
+    }
 
     TLLM_LOG_TRACE("%s stop", __PRETTY_FUNCTION__);
 }
