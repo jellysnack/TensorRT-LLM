@@ -18,6 +18,7 @@
 #include "tensorrt_llm/common/memoryUtils.h"
 #include "tensorrt_llm/kernels/banBadWords.h"
 #include "tensorrt_llm/kernels/banRepeatNgram.h"
+#include "tensorrt_llm/kernels/ngramPenalty.h"
 #include "tensorrt_llm/kernels/decodingKernels.h"
 #include "tensorrt_llm/kernels/penaltyKernels.h"
 #include "tensorrt_llm/kernels/stopCriteriaKernels.h"
@@ -568,7 +569,8 @@ void DynamicDecodeLayer<T>::banWords(Tensor& logits, OutputParams& outputs, Forw
 {
     TLLM_LOG_TRACE("%s start", __PRETTY_FUNCTION__);
 
-    banRepeatNGrams(logits, outputs, params, batchSlots, batchSize, beamWidth, maxSeqLen, vocabSizePadded, stream);
+    // banRepeatNGrams(logits, outputs, params, batchSlots, batchSize, beamWidth, maxSeqLen, vocabSizePadded, stream);
+    applyNGramPenalty(logits, outputs, params, batchSlots, batchSize, beamWidth, maxSeqLen, vocabSizePadded, stream);
     banBadWords(logits, outputs, params, batchSlots, batchSize, beamWidth, maxSeqLen, vocabSizePadded, stream);
 
     TLLM_LOG_TRACE("%s stop", __PRETTY_FUNCTION__);
@@ -592,6 +594,24 @@ void DynamicDecodeLayer<T>::banRepeatNGrams(Tensor& logits, OutputParams& output
             outputs.sequence_length->template getPtr<int>(), batchSize, beamWidth, maxSeqLen,
             params.no_repeat_ngram_size.value().template getPtr<int const>(), vocabSizePadded, max_step, stream);
     }
+    TLLM_LOG_TRACE("%s stop", __PRETTY_FUNCTION__);
+}
+
+template <typename T>
+void DynamicDecodeLayer<T>::applyNGramPenalty(Tensor& logits, OutputParams& outputs, ForwardParams const& params,
+    int32_t const* batchSlots, size_t batchSize, size_t beamWidth, size_t maxSeqLen, size_t vocabSizePadded,
+    cudaStream_t stream)
+{
+    TLLM_LOG_TRACE("%s start", __PRETTY_FUNCTION__);
+    auto const max_step = params.step;
+
+    invokeNgramPenalty(logits.template getPtr<T>(), outputs.output_ids_ptr.template getPtr<const int*>(),
+        reinterpret_cast<FinishedState*>(
+            params.finished.value_or(Tensor{}).template getPtr<FinishedState::UnderlyingType>()),
+        outputs.parent_ids_ptr.template getPtr<const int*>(), batchSlots,
+        outputs.sequence_length->template getPtr<int>(), batchSize, beamWidth, maxSeqLen,
+        vocabSizePadded, max_step, stream);
+
     TLLM_LOG_TRACE("%s stop", __PRETTY_FUNCTION__);
 }
 

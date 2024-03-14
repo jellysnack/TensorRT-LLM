@@ -188,6 +188,9 @@ private:
     static void banRepeatNGrams(tc::Tensor& logits, OutputParams& outputs, ForwardParams const& params,
         int32_t const* batchSlots, size_t batchSize, size_t beamWidth, size_t maxSeqLen, size_t vocabSizePadded,
         cudaStream_t stream);
+    static void applyNGramPenalty(tc::Tensor& logits, OutputParams& outputs, ForwardParams const& params,
+        int32_t const* batchSlots, size_t batchSize, size_t beamWidth, size_t maxSeqLen, size_t vocabSizePadded,
+        cudaStream_t stream);
     static void banBadWords(tc::Tensor& logits, OutputParams& outputs, ForwardParams const& params,
         int32_t const* batchSlots, size_t batchSize, size_t beamWidth, size_t maxSeqLen, size_t vocabSizePadded,
         cudaStream_t stream);
