@@ -13,24 +13,17 @@ __global__ void ngram_penalty(T* logits, const int** output_ids_buf, const Finis
     const int** parent_ids_buf, const int* batch_slots, int batch_size, int beam_width, int max_seq_len,
     int vocab_size_padded, const int* sequence_lengths)
 {
+    constexpr int max_ngram_size = 4;
+    constexpr int num_ngram_sizes = 4;
+    constexpr int ngram_sizes[] = {1, 2, 3, 4};
+    const T penalties[] = {0.5, 1.0, 2.0, 4.0};
+
     const int output_idx = blockIdx.x * blockDim.x + threadIdx.x;
     const int local_batch_idx = blockIdx.y / beam_width;
     auto const batch_slot = batch_slots != nullptr ? batch_slots[local_batch_idx] : local_batch_idx;
     const int beam_idx = blockIdx.y % beam_width;
     const bool beam_search = beam_width > 1;
     const int step = sequence_lengths[batch_slot];
-
-    constexpr int max_ngram_size = 4;
-    constexpr int num_ngram_sizes = 4;
-    const int ngram_sizes[] = {1, 2, 3, 4};
-    const T penalties[] = {0.5, 1.0, 2.0, 4.0};
-
-    // case 1: ngram_size == 0 --> this means no ngram limit
-    // case 2: generated length must be greater than ngram_size to do ngram check
-    if (max_ngram_size == 0 || step < max_ngram_size)
-    {
-        return;
-    }
 
     // if the beam has already finished, skip ngram check
     if ((finished_buf != nullptr) && (finished_buf[batch_slot * beam_width + beam_idx].isFinished()))
@@ -87,10 +80,11 @@ __global__ void ngram_penalty(T* logits, const int** output_ids_buf, const Finis
 
         bool ban_ngram = true;
 
-        // ngram check (in regular order)
+        // in case of ngram size = 1 we will not run the for loop
+        #pragma unroll
         for (int ngram_idx = 0; ngram_idx < ngram_sizes[i] - 1; ngram_idx++)
         {
-            if (shared_tokens[threadIdx.x + ngram_idx] != last_tokens[ngram_idx])
+            if (shared_tokens[threadIdx.x + ngram_idx] != last_tokens[max_ngram_size - ngram_sizes[i] + ngram_idx])
             {
                 ban_ngram = false;
                 break;
@@ -100,7 +94,7 @@ __global__ void ngram_penalty(T* logits, const int** output_ids_buf, const Finis
         if (ban_ngram)
         {
             int banned_token = shared_tokens[threadIdx.x + ngram_sizes[i] - 1];
-            logits[local_batch_idx * beam_width * vocab_size_padded + beam_idx * vocab_size_padded + banned_token] -= penalties[i];
+            atomicAdd(&logits[local_batch_idx * beam_width * vocab_size_padded + beam_idx * vocab_size_padded + banned_token], -penalties[i]);
         }
     }
 }
