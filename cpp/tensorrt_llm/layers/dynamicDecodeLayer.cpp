@@ -133,6 +133,12 @@ void DynamicDecodeLayer<T>::initialize()
         mConfiguredBeamWidth = mMaxBeamWidth;
         initializeLayers();
     }
+
+    const char* env = std::getenv("TRTLLM_NGRAM_PENALTY");
+    if (!env || std::string(env) == "true")
+    {
+        mUseNgramPenalty = true;
+    }
 }
 
 template <typename T>
@@ -175,6 +181,9 @@ void DynamicDecodeLayer<T>::initializeLayers()
 {
     const size_t workspaceSize = sizeof(int) * mMaxBatchSize * mConfiguredBeamWidth * mVocabSize;
     mPenaltyWorkspaceDevice = mAllocator->reMalloc(mPenaltyWorkspaceDevice, workspaceSize, false);
+
+    constexpr int32_t numNgrams = 4;
+    TLLM_CHECK_WITH_INFO(workspaceSize >= mMaxBatchSize * mVocabSizePadded * sizeof(int32_t), "not enough workspace for ngram penalty");
 
     if (mDecodingMode.isTopKorTopP())
     {
@@ -550,7 +559,8 @@ void DynamicDecodeLayer<T>::applyPenalties(OutputParams& outputs, ForwardParams 
     int32_t* tokensPerStep = nullptr;
     InvokeBatchApplyPenaltyParams<T> penaltyParams{reinterpret_cast<T const* const*>(logitsPtrsHostData),
         mRuntimeLogitsDevice, embeddingBias, mPenaltyWorkspaceDevice, mPenaltyWorkspacePrevDevice, temperatures,
-        repetitionPenalties, presencePenalties, frequencyPenalties,
+        mUseNgramPenalty ? nullptr : repetitionPenalties,
+        presencePenalties, frequencyPenalties,
         (mUseRepetitionPenalty || mUsePresencePenalty || mUseFrequencyPenalty), batchSize,
         static_cast<int32_t>(beamWidth), static_cast<int32_t>(maxSeqLen), mVocabSize, mVocabSizePadded,
         outputs.output_ids_ptr.template getPtr<int const*>(), outputs.parent_ids_ptr.template getPtr<int const*>(),
@@ -558,6 +568,23 @@ void DynamicDecodeLayer<T>::applyPenalties(OutputParams& outputs, ForwardParams 
         params.end_ids.template getPtr<int const>(), batchSlots, maxTokensPerStep, tokensPerStep, mStream};
     invokeBatchApplyPenalty(penaltyParams);
     sync_check_cuda_error();
+
+    if (repetitionPenalties && mUseNgramPenalty && params.step > 0)
+    {
+        invokeNgramPenalty(mRuntimeLogitsDevice,
+                           mPenaltyWorkspaceDevice,
+                           inputLengths,
+                           outputs.sequence_length->template getPtr<int32_t>(),
+                           outputs.output_ids_ptr.template getPtr<int32_t const*>(),
+                           reinterpret_cast<FinishedState*>(params.finished.value_or(Tensor{}).template getPtr<FinishedState::UnderlyingType>()),
+                           batchSlots,
+                           repetitionPenalties,
+                           batchSize,
+                           mVocabSizePadded,
+                           params.step,
+                           mStream);
+        sync_check_cuda_error();
+    }
 
     TLLM_LOG_TRACE("%s stop", __PRETTY_FUNCTION__);
 }
@@ -569,8 +596,7 @@ void DynamicDecodeLayer<T>::banWords(Tensor& logits, OutputParams& outputs, Forw
 {
     TLLM_LOG_TRACE("%s start", __PRETTY_FUNCTION__);
 
-    // banRepeatNGrams(logits, outputs, params, batchSlots, batchSize, beamWidth, maxSeqLen, vocabSizePadded, stream);
-    applyNGramPenalty(logits, outputs, params, batchSlots, batchSize, beamWidth, maxSeqLen, vocabSizePadded, stream);
+    banRepeatNGrams(logits, outputs, params, batchSlots, batchSize, beamWidth, maxSeqLen, vocabSizePadded, stream);
     banBadWords(logits, outputs, params, batchSlots, batchSize, beamWidth, maxSeqLen, vocabSizePadded, stream);
 
     TLLM_LOG_TRACE("%s stop", __PRETTY_FUNCTION__);
@@ -594,33 +620,6 @@ void DynamicDecodeLayer<T>::banRepeatNGrams(Tensor& logits, OutputParams& output
             outputs.sequence_length->template getPtr<int>(), batchSize, beamWidth, maxSeqLen,
             params.no_repeat_ngram_size.value().template getPtr<int const>(), vocabSizePadded, max_step, stream);
     }
-    TLLM_LOG_TRACE("%s stop", __PRETTY_FUNCTION__);
-}
-
-template <typename T>
-void DynamicDecodeLayer<T>::applyNGramPenalty(Tensor& logits, OutputParams& outputs, ForwardParams const& params,
-    int32_t const* batchSlots, size_t batchSize, size_t beamWidth, size_t maxSeqLen, size_t vocabSizePadded,
-    cudaStream_t stream)
-{
-    TLLM_LOG_TRACE("%s start", __PRETTY_FUNCTION__);
-    auto const max_step = params.step;
-
-    const char* env = std::getenv("TRTLLM_NGRAM_PENALTY");
-    if (env && std::string(env) == "false")
-    {
-        return;
-    }
-
-    if (max_step > 0)
-    {
-        invokeNgramPenalty(logits.template getPtr<T>(), outputs.output_ids_ptr.template getPtr<const int*>(),
-            reinterpret_cast<FinishedState*>(
-                params.finished.value_or(Tensor{}).template getPtr<FinishedState::UnderlyingType>()),
-            outputs.parent_ids_ptr.template getPtr<const int*>(), batchSlots,
-            outputs.sequence_length->template getPtr<int>(), batchSize, beamWidth, maxSeqLen,
-            vocabSizePadded, max_step, stream);
-    }
-
     TLLM_LOG_TRACE("%s stop", __PRETTY_FUNCTION__);
 }
 
