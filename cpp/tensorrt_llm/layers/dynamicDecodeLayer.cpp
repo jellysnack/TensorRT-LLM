@@ -135,7 +135,7 @@ void DynamicDecodeLayer<T>::initialize()
     }
 
     const char* env = std::getenv("TRTLLM_NGRAM_PENALTY");
-    if (!env || std::string(env) == "true")
+    if (env && std::string(env) == "true")
     {
         mUseNgramPenalty = true;
     }
@@ -569,7 +569,7 @@ void DynamicDecodeLayer<T>::applyPenalties(OutputParams& outputs, ForwardParams 
     invokeBatchApplyPenalty(penaltyParams);
     sync_check_cuda_error();
 
-    if (repetitionPenalties && mUseNgramPenalty && params.step > 0)
+    if (repetitionPenalties && mUseNgramPenalty)
     {
         invokeNgramPenalty(mRuntimeLogitsDevice,
                            mPenaltyWorkspaceDevice,
@@ -581,7 +581,6 @@ void DynamicDecodeLayer<T>::applyPenalties(OutputParams& outputs, ForwardParams 
                            repetitionPenalties,
                            batchSize,
                            mVocabSizePadded,
-                           params.step,
                            mStream);
         sync_check_cuda_error();
     }
@@ -609,7 +608,7 @@ void DynamicDecodeLayer<T>::banRepeatNGrams(Tensor& logits, OutputParams& output
 {
     TLLM_LOG_TRACE("%s start", __PRETTY_FUNCTION__);
     auto const max_step = params.step;
-    if (params.no_repeat_ngram_size && max_step > 0)
+    if (params.no_repeat_ngram_size)
     {
         int const* noRepeatNgramSizeBuf = params.no_repeat_ngram_size.value().template getPtr<int const>();
 

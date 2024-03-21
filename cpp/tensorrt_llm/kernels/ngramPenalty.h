@@ -22,7 +22,6 @@ void invokeNgramPenalty(T* logits,
                         float const* penalties,
                         runtime::SizeType batchSize,
                         runtime::SizeType vocabSizePadded,
-                        runtime::SizeType maxStep,
                         cudaStream_t stream);
 
 } // namespace kernels

@@ -21,11 +21,10 @@ __global__ void calc_ngram_penalty(int32_t* workspace,
     SizeType constexpr numNgrams = 4;
     SizeType constexpr ngramSizes[] = {1, 2, 3, 4};
 
-    auto const batchIdx = static_cast<SizeType>(blockIdx.y);
+    auto const batchIdx = static_cast<SizeType>(blockIdx.x);
     auto const batchSlot = batchSlots != nullptr ? batchSlots[batchIdx] : batchIdx;
     auto const inputLength = inputLengths[batchSlot];
     auto const sequenceLength = sequenceLengths[batchSlot];
-    auto const currTokenIdx = static_cast<SizeType>(inputLength + blockIdx.x * blockDim.x + threadIdx.x);
 
     extern __shared__ TokenIdType sharedTokens[];
     auto const sharedTokensLength = static_cast<SizeType>(blockDim.x + maxNgramSize - 1);
@@ -38,57 +37,59 @@ __global__ void calc_ngram_penalty(int32_t* workspace,
         return;
     }
 
-    // write the tokens of the current block to shared memory
-    if (currTokenIdx < sequenceLength)
+    for (auto currTokenIdx = static_cast<SizeType>(inputLength + threadIdx.x); currTokenIdx < sequenceLength;
+         currTokenIdx += static_cast<SizeType>(blockDim.x))
     {
+        // write the tokens of the current block to shared memory
         sharedTokens[threadIdx.x] = outputIdsPtr[batchSlot][currTokenIdx];
-    }
 
-    // write the next (maxNgramSize - 1) tokens after the current block, as well as the last (maxNgramSize - 1) tokens
-    if (threadIdx.x == blockDim.x - 1)
-    {
-        SizeType bound = min(currTokenIdx + sharedTokensLength, sequenceLength);
-        for (auto i = static_cast<SizeType>(blockDim.x), tokenIdx = currTokenIdx + 1; tokenIdx < bound; ++i, ++tokenIdx)
+        // write the next (maxNgramSize - 1) tokens after the current block, as well as the last (maxNgramSize - 1) tokens
+        if (threadIdx.x == 0)
         {
-            sharedTokens[i] = outputIdsPtr[batchSlot][tokenIdx];
-        }
-
-        bound = max(sequenceLength - lastTokensLength, inputLength);
-        for (SizeType i = 0, tokenIdx = sequenceLength - 1; tokenIdx >= bound; ++i, --tokenIdx)
-        {
-            lastTokens[lastTokensLength - 1 - i] = outputIdsPtr[batchSlot][tokenIdx];
-        }
-    }
-
-    __syncthreads();
-
-    #pragma unroll
-    for (SizeType i = 0; i < numNgrams; ++i)
-    {
-        if (currTokenIdx > sequenceLength - ngramSizes[i])
-        {
-            continue;
-        }
-
-        bool ngramMatch = true;
-
-        // in case of ngram size = 1 we will not run the for loop
-        #pragma unroll
-        for (SizeType ngramIdx = 0; ngramIdx < ngramSizes[i] - 1; ++ngramIdx)
-        {
-            if (sharedTokens[threadIdx.x + ngramIdx] != lastTokens[maxNgramSize - ngramSizes[i] + ngramIdx])
+            SizeType tokenIdx = currTokenIdx + static_cast<SizeType>(blockDim.x);
+            SizeType bound = min(tokenIdx + sharedTokensLength, sequenceLength);
+            for (auto i = static_cast<SizeType>(blockDim.x); tokenIdx < bound; ++i, ++tokenIdx)
             {
-                ngramMatch = false;
-                break;
+                sharedTokens[i] = outputIdsPtr[batchSlot][tokenIdx];
+            }
+
+            bound = max(sequenceLength - lastTokensLength, inputLength);
+            for (SizeType i = 0, tokenIdx = sequenceLength - 1; tokenIdx >= bound; ++i, --tokenIdx)
+            {
+                lastTokens[lastTokensLength - 1 - i] = outputIdsPtr[batchSlot][tokenIdx];
             }
         }
 
-        if (ngramMatch)
+        __syncthreads();
+
+        #pragma unroll
+        for (SizeType i = 0; i < numNgrams; ++i)
         {
-            SizeType tokenIdx = sharedTokens[threadIdx.x + ngramSizes[i] - 1];
-            SizeType workspaceIdx = batchIdx * vocabSizePadded  + tokenIdx;
-            int32_t bitPos = ngramSizes[i] - 1;
-            atomicOr(&workspace[workspaceIdx], (int32_t)1 << bitPos);
+            if (currTokenIdx > sequenceLength - ngramSizes[i])
+            {
+                continue;
+            }
+
+            bool ngramMatch = true;
+
+            // in case of ngram size = 1 we will not run the for loop
+            #pragma unroll
+            for (SizeType ngramIdx = 0; ngramIdx < ngramSizes[i] - 1; ++ngramIdx)
+            {
+                if (sharedTokens[threadIdx.x + ngramIdx] != lastTokens[maxNgramSize - ngramSizes[i] + ngramIdx])
+                {
+                    ngramMatch = false;
+                    break;
+                }
+            }
+
+            if (ngramMatch)
+            {
+                SizeType tokenIdx = sharedTokens[threadIdx.x + ngramSizes[i] - 1];
+                SizeType workspaceIdx = batchIdx * vocabSizePadded  + tokenIdx;
+                int32_t bitPos = ngramSizes[i] - 1;
+                atomicOr(&workspace[workspaceIdx], (int32_t)1 << bitPos);
+            }
         }
     }
 }
@@ -136,7 +137,6 @@ void invokeNgramPenalty(T* logits,
                         float const* penalties,
                         SizeType batchSize,
                         SizeType vocabSizePadded,
-                        SizeType maxStep,
                         cudaStream_t stream)
 {
     TLLM_CHECK_WITH_INFO(workspace, "no workspace provided for ngram penalty");
@@ -144,12 +144,8 @@ void invokeNgramPenalty(T* logits,
     constexpr SizeType maxNgramSize = 4;
     cudaMemsetAsync(workspace, 0, batchSize * vocabSizePadded * sizeof(int32_t), stream);
     
-    dim3 block, grid;
-    constexpr SizeType maxBlocks{256};
-    block.x = min(((maxStep + 32 - 1) / 32) * 32, maxBlocks);
-    grid.x = (maxStep + block.x - 1) / block.x;
-    grid.y = batchSize;
-    grid.z = 1;
+    dim3 block(256);
+    dim3 grid(batchSize);
 
     // allocate shared memory of [blockDim + 2*(maxNgramSize - 1)] size, 
     // where 2*(maxNgramSize - 1) is for boundary token's ngram and for most recent generated tokens
@@ -162,8 +158,6 @@ void invokeNgramPenalty(T* logits,
         batchSlot,
         vocabSizePadded);
 
-    block = dim3(maxBlocks);
-    grid = dim3(batchSize);
     apply_ngram_penalty<<<grid, block, 0, stream>>>(
         logits,
         workspace,
@@ -183,7 +177,6 @@ void invokeNgramPenalty(T* logits,
                                      float const* penalties,            \
                                      SizeType batchSize,                \
                                      SizeType vocabSizePadded,          \
-                                     SizeType maxStep,                  \
                                      cudaStream_t stream);
 
 INVOKE_NGRAM_PENALTY(float)
