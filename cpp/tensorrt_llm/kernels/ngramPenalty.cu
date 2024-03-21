@@ -15,7 +15,7 @@ __global__ void calc_ngram_penalty(int32_t* workspace,
                                    TokenIdType const** outputIdsPtr,
                                    FinishedState const* finished,
                                    SizeType const* batchSlots,
-                                   SizeType vocabSizePadded)
+                                   SizeType vocabSize)
 {
     SizeType constexpr maxNgramSize = 4;
     SizeType constexpr numNgrams = 4;
@@ -36,6 +36,13 @@ __global__ void calc_ngram_penalty(int32_t* workspace,
     {
         return;
     }
+
+    for (auto index = static_cast<SizeType>(threadIdx.x); index < vocabSize;
+         index += static_cast<SizeType>(blockDim.x))
+    {
+        workspace[batchIdx * vocabSize + index] = 0;
+    }
+    __syncthreads();
 
     for (auto currTokenIdx = static_cast<SizeType>(inputLength + threadIdx.x); currTokenIdx < sequenceLength;
          currTokenIdx += static_cast<SizeType>(blockDim.x))
@@ -83,10 +90,10 @@ __global__ void calc_ngram_penalty(int32_t* workspace,
                 }
             }
 
-            if (ngramMatch)
+            SizeType tokenIdx = sharedTokens[threadIdx.x + ngramSizes[i] - 1];
+            if (ngramMatch && tokenIdx < vocabSize)
             {
-                SizeType tokenIdx = sharedTokens[threadIdx.x + ngramSizes[i] - 1];
-                SizeType workspaceIdx = batchIdx * vocabSizePadded  + tokenIdx;
+                SizeType workspaceIdx = batchIdx * vocabSize + tokenIdx;
                 int32_t bitPos = ngramSizes[i] - 1;
                 atomicOr(&workspace[workspaceIdx], (int32_t)1 << bitPos);
             }
@@ -94,55 +101,19 @@ __global__ void calc_ngram_penalty(int32_t* workspace,
     }
 }
 
-template <typename T>
-__global__ void apply_ngram_penalty(T* logits,
-                                    int32_t* workspace,
-                                    SizeType const* batchSlots,
-                                    float const* penalties,
-                                    SizeType vocabSizePadded)
-{
-    SizeType constexpr numNgrams = 4;
-    SizeType constexpr ngramSizes[] = {1, 2, 3, 4};
-
-    auto const batchIdx = static_cast<SizeType>(blockIdx.x);
-    auto const batchSlot = batchSlots != nullptr ? batchSlots[batchIdx] : batchIdx;
-    float penalty = penalties[batchSlot];
-
-    for (auto index = static_cast<SizeType>(threadIdx.x); index < vocabSizePadded;
-         index += static_cast<SizeType>(blockDim.x))
-    {
-        #pragma unroll
-        for (SizeType i = 0; i < numNgrams; ++i)
-        {
-            SizeType workspaceIdx = batchIdx * vocabSizePadded + index;
-            int32_t bitPos = ngramSizes[i] - 1;
-            if ((workspace[workspaceIdx] >> bitPos) & (int32_t)1)
-            {
-                auto logit = static_cast<float>(logits[batchIdx * vocabSizePadded + index]);
-                logit = logit < 0.0f ? logit * penalty : logit / penalty;
-                logits[batchIdx * vocabSizePadded + index] = logit;
-            }
-        }
-    }
-}
-
-template <typename T>
-void invokeNgramPenalty(T* logits,
-                        int32_t* workspace,
+void invokeNgramPenalty(int32_t* workspace,
                         SizeType const* inputLengths,
                         SizeType const* sequenceLengths,
                         TokenIdType const** outputIdsPtr,
                         FinishedState const* finished,
                         SizeType const* batchSlot,
-                        float const* penalties,
                         SizeType batchSize,
-                        SizeType vocabSizePadded,
+                        SizeType vocabSize,
                         cudaStream_t stream)
 {
     TLLM_CHECK_WITH_INFO(workspace, "no workspace provided for ngram penalty");
 
     constexpr SizeType maxNgramSize = 4;
-    cudaMemsetAsync(workspace, 0, batchSize * vocabSizePadded * sizeof(int32_t), stream);
     
     dim3 block(256);
     dim3 grid(batchSize);
@@ -156,35 +127,8 @@ void invokeNgramPenalty(T* logits,
         outputIdsPtr,
         finished,
         batchSlot,
-        vocabSizePadded);
-
-    apply_ngram_penalty<<<grid, block, 0, stream>>>(
-        logits,
-        workspace,
-        batchSlot,
-        penalties,
-        vocabSizePadded);
+        vocabSize);
 }
-
-#define INVOKE_NGRAM_PENALTY(T)                                         \
-    template void invokeNgramPenalty(T* logits,                         \
-                                     int32_t* workspace,                \
-                                     SizeType const* inputLengths,      \
-                                     SizeType const* sequenceLengths,   \
-                                     TokenIdType const** outputIdsPtr,  \
-                                     FinishedState const* finished,     \
-                                     SizeType const* batchSlot,         \
-                                     float const* penalties,            \
-                                     SizeType batchSize,                \
-                                     SizeType vocabSizePadded,          \
-                                     cudaStream_t stream);
-
-INVOKE_NGRAM_PENALTY(float)
-INVOKE_NGRAM_PENALTY(half)
-#ifdef ENABLE_BF16
-INVOKE_NGRAM_PENALTY(__nv_bfloat16)
-#endif
-#undef INVOKE_NGRAM_PENALTY
 
 } // namespace kernels
 

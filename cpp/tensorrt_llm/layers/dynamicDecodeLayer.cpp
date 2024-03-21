@@ -182,9 +182,6 @@ void DynamicDecodeLayer<T>::initializeLayers()
     const size_t workspaceSize = sizeof(int) * mMaxBatchSize * mConfiguredBeamWidth * mVocabSize;
     mPenaltyWorkspaceDevice = mAllocator->reMalloc(mPenaltyWorkspaceDevice, workspaceSize, false);
 
-    constexpr int32_t numNgrams = 4;
-    TLLM_CHECK_WITH_INFO(workspaceSize >= mMaxBatchSize * mVocabSizePadded * sizeof(int32_t), "not enough workspace for ngram penalty");
-
     if (mDecodingMode.isTopKorTopP())
     {
         mSamplingLayer = std::make_unique<SamplingLayer<T>>(
@@ -555,35 +552,36 @@ void DynamicDecodeLayer<T>::applyPenalties(OutputParams& outputs, ForwardParams 
 
 #undef GET_PENALTIES
 
+    if (mUseNgramPenalty)
+    {
+        TLLM_CHECK_WITH_INFO(beamWidth == 1, "ngram penalty does not support beam size > 1");
+        if (repetitionPenalties)
+        {
+            invokeNgramPenalty(mPenaltyWorkspaceDevice,
+                               inputLengths,
+                               outputs.sequence_length->template getPtr<int32_t>(),
+                               outputs.output_ids_ptr.template getPtr<int32_t const*>(),
+                               reinterpret_cast<FinishedState*>(params.finished.value_or(Tensor{}).template getPtr<FinishedState::UnderlyingType>()),
+                               batchSlots,
+                               batchSize,
+                               mVocabSize,
+                               mStream);
+            sync_check_cuda_error();
+        }
+    }
+
     constexpr int32_t maxTokensPerStep = 1;
     int32_t* tokensPerStep = nullptr;
     InvokeBatchApplyPenaltyParams<T> penaltyParams{reinterpret_cast<T const* const*>(logitsPtrsHostData),
         mRuntimeLogitsDevice, embeddingBias, mPenaltyWorkspaceDevice, mPenaltyWorkspacePrevDevice, temperatures,
-        mUseNgramPenalty ? nullptr : repetitionPenalties,
-        presencePenalties, frequencyPenalties,
-        (mUseRepetitionPenalty || mUsePresencePenalty || mUseFrequencyPenalty), batchSize,
+        repetitionPenalties, presencePenalties, frequencyPenalties,
+        (mUseRepetitionPenalty || mUsePresencePenalty || mUseFrequencyPenalty), mUseNgramPenalty, batchSize,
         static_cast<int32_t>(beamWidth), static_cast<int32_t>(maxSeqLen), mVocabSize, mVocabSizePadded,
         outputs.output_ids_ptr.template getPtr<int const*>(), outputs.parent_ids_ptr.template getPtr<int const*>(),
         inputLengths, outputs.sequence_length->template getPtr<int const>(), minLengths,
         params.end_ids.template getPtr<int const>(), batchSlots, maxTokensPerStep, tokensPerStep, mStream};
     invokeBatchApplyPenalty(penaltyParams);
     sync_check_cuda_error();
-
-    if (repetitionPenalties && mUseNgramPenalty)
-    {
-        invokeNgramPenalty(mRuntimeLogitsDevice,
-                           mPenaltyWorkspaceDevice,
-                           inputLengths,
-                           outputs.sequence_length->template getPtr<int32_t>(),
-                           outputs.output_ids_ptr.template getPtr<int32_t const*>(),
-                           reinterpret_cast<FinishedState*>(params.finished.value_or(Tensor{}).template getPtr<FinishedState::UnderlyingType>()),
-                           batchSlots,
-                           repetitionPenalties,
-                           batchSize,
-                           mVocabSizePadded,
-                           mStream);
-        sync_check_cuda_error();
-    }
 
     TLLM_LOG_TRACE("%s stop", __PRETTY_FUNCTION__);
 }
