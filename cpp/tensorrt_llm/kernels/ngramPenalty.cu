@@ -31,18 +31,19 @@ __global__ void calc_ngram_penalty(int32_t* workspace,
     SizeType const lastTokensLength = maxNgramSize - 1;
     TokenIdType* lastTokens = &sharedTokens[sharedTokensLength];
 
-    // if the beam has already finished, skip ngram check
-    if ((finished != nullptr) && (finished[batchSlot].isFinished()))
-    {
-        return;
-    }
-
     for (auto index = static_cast<SizeType>(threadIdx.x); index < vocabSize;
          index += static_cast<SizeType>(blockDim.x))
     {
         workspace[batchIdx * vocabSize + index] = 0;
     }
+
     __syncthreads();
+
+    // if the beam has already finished, skip ngram check
+    if ((finished != nullptr) && (finished[batchSlot].isFinished()))
+    {
+        return;
+    }
 
     for (auto currTokenIdx = static_cast<SizeType>(inputLength + threadIdx.x); currTokenIdx < sequenceLength;
          currTokenIdx += static_cast<SizeType>(blockDim.x))

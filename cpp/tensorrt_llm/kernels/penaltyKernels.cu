@@ -146,14 +146,17 @@ __global__ void batchApplyPenalty(T const* const* inputLogits, T* outputLogits, 
             }
             if (ngramPenalty)
             {
-                #pragma unroll
-                for (SizeType i = 0; i < numNgrams; ++i)
+                if (repetitionPenalties != nullptr)
                 {
-                    SizeType workspaceIdx = batchBeamStepIdx * vocabSize + index;
-                    int32_t bitPos = ngramSizes[i] - 1;
-                    if ((penaltyWorkspace[workspaceIdx] >> bitPos) & (int32_t)1)
+                    #pragma unroll
+                    for (SizeType i = 0; i < numNgrams; ++i)
                     {
-                        logit = logit < 0.0f ? logit * repetitionPenalty : logit / repetitionPenalty;
+                        SizeType workspaceIdx = batchBeamStepIdx * vocabSize + index;
+                        int32_t bitPos = ngramSizes[i] - 1;
+                        if ((penaltyWorkspace[workspaceIdx] >> bitPos) & (int32_t)1)
+                        {
+                            logit = logit < 0.0f ? logit * repetitionPenalty : logit / repetitionPenalty;
+                        }
                     }
                 }
             }
