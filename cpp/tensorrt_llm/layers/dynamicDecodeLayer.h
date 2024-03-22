@@ -241,6 +241,7 @@ private:
     bool mUsePresencePenalty = false;
     bool mUseFrequencyPenalty = false;
     bool mUseMinLength = false;
+    bool mUseNgramPenalty = false;
 
     bool mHasDiffRuntimeArgs = false;
     int* h_pinned_finished_sum_ = nullptr;

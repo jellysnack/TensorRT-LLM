@@ -18,6 +18,7 @@
 #include "tensorrt_llm/common/memoryUtils.h"
 #include "tensorrt_llm/kernels/banBadWords.h"
 #include "tensorrt_llm/kernels/banRepeatNgram.h"
+#include "tensorrt_llm/kernels/ngramPenalty.h"
 #include "tensorrt_llm/kernels/decodingKernels.h"
 #include "tensorrt_llm/kernels/penaltyKernels.h"
 #include "tensorrt_llm/kernels/stopCriteriaKernels.h"
@@ -131,6 +132,12 @@ void DynamicDecodeLayer<T>::initialize()
     {
         mConfiguredBeamWidth = mMaxBeamWidth;
         initializeLayers();
+    }
+
+    const char* env = std::getenv("TRTLLM_NGRAM_PENALTY");
+    if (env && std::string(env) == "true")
+    {
+        mUseNgramPenalty = true;
     }
 }
 
@@ -545,12 +552,30 @@ void DynamicDecodeLayer<T>::applyPenalties(OutputParams& outputs, ForwardParams 
 
 #undef GET_PENALTIES
 
+    if (mUseNgramPenalty)
+    {
+        TLLM_CHECK_WITH_INFO(beamWidth == 1, "ngram penalty does not support beam size > 1");
+        if (repetitionPenalties)
+        {
+            invokeNgramPenalty(mPenaltyWorkspaceDevice,
+                               inputLengths,
+                               outputs.sequence_length->template getPtr<int32_t>(),
+                               outputs.output_ids_ptr.template getPtr<int32_t const*>(),
+                               reinterpret_cast<FinishedState*>(params.finished.value_or(Tensor{}).template getPtr<FinishedState::UnderlyingType>()),
+                               batchSlots,
+                               batchSize,
+                               mVocabSize,
+                               mStream);
+            sync_check_cuda_error();
+        }
+    }
+
     constexpr int32_t maxTokensPerStep = 1;
     int32_t* tokensPerStep = nullptr;
     InvokeBatchApplyPenaltyParams<T> penaltyParams{reinterpret_cast<T const* const*>(logitsPtrsHostData),
         mRuntimeLogitsDevice, embeddingBias, mPenaltyWorkspaceDevice, mPenaltyWorkspacePrevDevice, temperatures,
         repetitionPenalties, presencePenalties, frequencyPenalties,
-        (mUseRepetitionPenalty || mUsePresencePenalty || mUseFrequencyPenalty), batchSize,
+        (mUseRepetitionPenalty || mUsePresencePenalty || mUseFrequencyPenalty), mUseNgramPenalty, batchSize,
         static_cast<int32_t>(beamWidth), static_cast<int32_t>(maxSeqLen), mVocabSize, mVocabSizePadded,
         outputs.output_ids_ptr.template getPtr<int const*>(), outputs.parent_ids_ptr.template getPtr<int const*>(),
         inputLengths, outputs.sequence_length->template getPtr<int const>(), minLengths,
