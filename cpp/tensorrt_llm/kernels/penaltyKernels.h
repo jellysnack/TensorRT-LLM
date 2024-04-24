@@ -39,6 +39,7 @@ struct InvokeBatchApplyPenaltyParams
     float const* presencePenalties;
     float const* frequencyPenalties;
     bool const accumulateVocab;
+    bool const ngramPenalty;
     runtime::SizeType const batchSize;
     runtime::SizeType const beamWidth;
     runtime::SizeType const maxSeqLen;
