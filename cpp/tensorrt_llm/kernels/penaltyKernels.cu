@@ -40,7 +40,7 @@ template <typename T>
 __global__ void batchApplyPenalty(T const* const* inputLogits, T* outputLogits, T const* biases,
     TokenIdType* penaltyWorkspace, TokenIdType const* penaltyWorkspacePrev, float const* temperatures,
     float const* repetitionPenalties, float const* presencePenalties, float const* frequencyPenalties,
-    SizeType32 maxSeqLen, SizeType32 vocabSize, SizeType32 vocabSizePadded, TokenIdType const** outputIdsPtr,
+    bool ngramPenalty, SizeType32 maxSeqLen, SizeType32 vocabSize, SizeType32 vocabSizePadded, TokenIdType const** outputIdsPtr,
     SizeType32 const** parentIdsPtr, SizeType32 const* inputLengths, SizeType32 const* sequenceLengths,
     SizeType32 const* minLengths, TokenIdType const* endIds, SizeType32 const* batchSlots,
     SizeType32 const* tokensPerStep)
@@ -56,6 +56,9 @@ __global__ void batchApplyPenalty(T const* const* inputLogits, T* outputLogits, 
     auto const inputLen = inputLengths == nullptr ? SizeType32{0} : inputLengths[batchSlotBeamIdx];
     auto const currentStep = sequenceLengths == nullptr ? SizeType32{0} : sequenceLengths[batchSlotBeamIdx];
     T const* biasBase = biases + batchSlot * vocabSizePadded;
+
+    SizeType32 constexpr numNgrams = 4;
+    SizeType32 constexpr ngramSizes[] = {1, 2, 3, 4};
 
     if (tokensPerStep != nullptr && stepIdx >= tokensPerStep[batchSlot])
     {
@@ -99,7 +102,7 @@ __global__ void batchApplyPenalty(T const* const* inputLogits, T* outputLogits, 
     }
 
     // Initialize or update the number of occurrences of tokens
-    if (accumulateVocab)
+    if (!ngramPenalty && accumulateVocab)
     {
         penaltyWorkspace += batchBeamStepIdx * vocabSize;
         if (currentStep <= inputLen)
@@ -166,7 +169,23 @@ __global__ void batchApplyPenalty(T const* const* inputLogits, T* outputLogits, 
             {
                 logit *= invTemperature;
             }
-            if (accumulateVocab)
+            if (ngramPenalty)
+            {
+                if (repetitionPenalties != nullptr)
+                {
+                    #pragma unroll
+                    for (SizeType32 i = 0; i < numNgrams; ++i)
+                    {
+                        SizeType32 workspaceIdx = batchBeamStepIdx * vocabSize + index;
+                        int32_t bitPos = ngramSizes[i] - 1;
+                        if ((penaltyWorkspace[workspaceIdx] >> bitPos) & (int32_t)1)
+                        {
+                            logit = logit < 0.0f ? logit * repetitionPenalty : logit / repetitionPenalty;
+                        }
+                    }
+                }
+            }
+            else if (accumulateVocab)
             {
                 SizeType32 numOccurences = penaltyWorkspace[index];
                 if (numOccurences > 0)
@@ -223,9 +242,9 @@ void invokeBatchApplyPenalty(InvokeBatchApplyPenaltyParams<T> const& params)
     dim3 grid(params.batchSize, params.beamWidth, params.maxTokensPerStep);
     batchApplyPenalty<T><<<grid, block, 0, params.stream>>>(params.inputLogits, params.outputLogits, params.biases,
         params.penaltyWorkspace, params.penaltyWorkspacePrev, params.temperatures, params.repetitionPenalties,
-        params.presencePenalties, params.frequencyPenalties, params.maxSeqLen, params.vocabSize, params.vocabSizePadded,
-        params.outputIdsPtr, params.parentIdsPtr, params.inputLengths, params.sequenceLengths, params.minLengths,
-        params.endIds, params.batchSlots, params.tokensPerStep);
+        params.presencePenalties, params.frequencyPenalties, params.ngramPenalty, params.maxSeqLen, params.vocabSize,
+        params.vocabSizePadded, params.outputIdsPtr, params.parentIdsPtr, params.inputLengths, params.sequenceLengths,
+        params.minLengths, params.endIds, params.batchSlots, params.tokensPerStep);
 }
 
 template void invokeBatchApplyPenalty(InvokeBatchApplyPenaltyParams<float> const& params);
