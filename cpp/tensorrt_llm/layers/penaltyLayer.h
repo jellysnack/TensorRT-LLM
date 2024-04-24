@@ -83,6 +83,7 @@ private:
     bool mUsePresencePenalty{false};
     bool mUseFrequencyPenalty{false};
     bool mUseMinLength{false};
+    bool mUseNgramPenalty{false};
 
     runtime::SizeType32 mCyclicStep{0};
     runtime::SizeType32 mRuntimeMaxSeqLen{0};

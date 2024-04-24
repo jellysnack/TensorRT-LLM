@@ -17,6 +17,7 @@
 
 #include "penaltyLayer.h"
 #include "tensorrt_llm/common/cudaUtils.h"
+#include "tensorrt_llm/kernels/ngramPenalty.h"
 #include "tensorrt_llm/kernels/penaltyKernels.h"
 #include "tensorrt_llm/layers/defaultDecodingParams.h"
 #include "tensorrt_llm/layers/layerUtils.h"
@@ -66,6 +67,12 @@ void PenaltyLayer<T>::initialize()
         mConfiguredBeamWidth = mDecoderDomain.getBeamWidth();
 
         allocateWorkspace();
+    }
+
+    const char* env = std::getenv("TRTLLM_NGRAM_PENALTY");
+    if (env && std::string(env) == "true")
+    {
+        mUseNgramPenalty = true;
     }
 
     TLLM_LOG_TRACE("%s stop", __PRETTY_FUNCTION__);
@@ -267,6 +274,24 @@ void PenaltyLayer<T>::forwardAsync(
 
 #undef GET_PENALTIES
 
+    if (mUseNgramPenalty)
+    {
+        TLLM_CHECK_WITH_INFO(beamWidth == 1, "ngram penalty does not support beam size > 1");
+        if (repetitionPenalties)
+        {
+            invokeNgramPenalty(mPenaltyWorkspaceDevice,
+                               inputLengths,
+                               outputs.sequence_length->template getPtr<int32_t>(),
+                               outputs.output_ids_ptr.template getPtr<int32_t const*>(),
+                               reinterpret_cast<FinishedState*>(params.finished.value_or(Tensor{}).template getPtr<FinishedState::UnderlyingType>()),
+                               batchSlots,
+                               localDecoderDomain.getBatchSize(),
+                               mDecoderDomain.getVocabSize(),
+                               getStream());
+            sync_check_cuda_error();
+        }
+    }
+
     auto const tokensPerStep = bufferCastOrNull<SizeType32>(params->curTokensPerStep);
 
     InvokeBatchApplyPenaltyParams<T> penaltyParams;
@@ -285,6 +310,7 @@ void PenaltyLayer<T>::forwardAsync(
     penaltyParams.repetitionPenalties = bufferCastOrNull<float>(repetitionPenalties);
     penaltyParams.presencePenalties = bufferCastOrNull<float>(presencePenalties);
     penaltyParams.frequencyPenalties = bufferCastOrNull<float>(frequencyPenalties);
+    penaltyParams.ngramPenalty = mUseNgramPenalty;
     penaltyParams.batchSize = localDecoderDomain.getBatchSize();
     penaltyParams.beamWidth = localDecoderDomain.getBeamWidth();
     penaltyParams.maxSeqLen = maxSeqLen;
