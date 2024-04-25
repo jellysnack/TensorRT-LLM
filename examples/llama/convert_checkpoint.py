@@ -5,6 +5,7 @@ import sys
 import time
 import traceback
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from typing import Optional, Dict, Callable
 
 import tensorrt_llm
 from tensorrt_llm._utils import release_gc
@@ -13,7 +14,7 @@ from tensorrt_llm.mapping import Mapping
 from tensorrt_llm.models import LLaMAForCausalLM
 from tensorrt_llm.models.llama.weight import load_from_gptq_llama
 from tensorrt_llm.models.modeling_utils import QuantConfig
-from tensorrt_llm.quantization import QuantAlgo
+from tensorrt_llm.quantization import QuantAlgo, CalibrationConfig
 
 
 def parse_arguments():
@@ -197,6 +198,12 @@ def parse_arguments():
         help=
         'Only save the model config w/o read and converting weights, be careful, this is for debug only'
     )
+    parser.add_argument(
+        '--calibration_config',
+        type=str,
+        default=None,
+        help='Path to a calibration config'
+    )
 
     args = parser.parse_args()
     # changing the default to be consistent as the cli help said.
@@ -322,6 +329,42 @@ def preload_model(model_dir):
     return model
 
 
+def create_formatting_func(formatting_func_config: Dict) -> Callable:
+    def formatting_func(sample):
+        text_parts = []
+        for part in formatting_func_config['template']:
+            if part['type'] == 'from_sample':
+                if part['key'] not in sample:
+                    raise ValueError(f'Unknown sample key. The actual are: {list(sample.keys())}')
+                text_parts.append(sample[part['key']])
+            elif part['type'] == 'text':
+                text_parts.append(part['text'])
+            else:
+                raise ValueError(f'Unknwon text part type: {part["type"]}')
+            
+        text = ' '.join(text_parts) # TODO space?
+
+        for old, new in formatting_func_config['replacement_rules'].items():
+            text = text.replace(old, new)
+
+        return {"text": text}
+    
+    return formatting_func
+
+
+def load_calibration_config(calib_config_path: Optional[str]) -> Optional[CalibrationConfig]:
+    if calib_config_path is None:
+        return None
+    
+    with open(calib_config_path) as f:
+        calib_config = json.load(f)
+
+    if calib_config['formatting_func'] is not None:
+        calib_config['formatting_func'] = create_formatting_func(calib_config['formatting_func'])
+
+    return CalibrationConfig.from_dict(calib_config)
+
+
 def convert_and_save_hf(args):
     model_dir = args.model_dir
     load_model_on_cpu = args.load_model_on_cpu
@@ -342,13 +385,17 @@ def convert_and_save_hf(args):
             rank=-1,  #intentinoally make -1 to avoid mistake
             tp_size=args.tp_size,
             pp_size=args.pp_size)
+        
+        calib_config = load_calibration_config(args.calibration_config)
+
         LLaMAForCausalLM.quantize(args.model_dir,
                                   args.output_dir,
                                   quantization,
                                   dtype=args.dtype,
                                   mapping=mapping,
                                   override_fields=override_fields,
-                                  dataset_cache_dir=args.dataset_cache_dir)
+                                  dataset_cache_dir=args.dataset_cache_dir,
+                                  calib_config=calib_config)
     else:
         # When not loading by shard, preload one complete model and then slice per rank weights from this
         # this saves the disk reloading time

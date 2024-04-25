@@ -12,6 +12,7 @@ import numpy as np
 import safetensors
 import torch
 import torch.nn as nn
+from torch.utils.data import DataLoader
 from datasets import load_dataset
 from tqdm import tqdm
 from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer
@@ -21,7 +22,7 @@ from transformers.pytorch_utils import Conv1D
 from ..._utils import pad_vocab_size, release_gc
 from ...layers import MoeConfig
 from ...mapping import Mapping
-from ...quantization import QuantAlgo
+from ...quantization import QuantAlgo, CalibrationConfig
 from ..modeling_utils import PretrainedConfig, QuantConfig
 from .weight import load_from_hf_checkpoint
 
@@ -307,15 +308,9 @@ def smooth_llama_model(model, scales, alpha, llama_qkv_para, llama_smoother):
 
 @torch.no_grad()
 def capture_activation_range(model,
-                             tokenizer,
-                             dataset,
-                             num_samples=512,
-                             seq_len=512):
+                             dataloader):
     model.eval()
-    device = next(model.parameters()).device
     act_scales = defaultdict(lambda: {"x": None, "y": None, "w": None})
-
-    tokenizer.pad_token = tokenizer.eos_token
 
     def stat_tensor(name, tensor, act_scales, key):
         hidden_dim = tensor.shape[-1]
@@ -345,18 +340,9 @@ def capture_activation_range(model,
                 m.register_forward_hook(
                     functools.partial(stat_input_hook, name=name)))
 
-    for i in tqdm(range(num_samples), desc="calibrating model"):
-        datapoint = dataset['train'][i:i + 1]
-        line = copy.copy(datapoint['article'])
-        line[0] = line[0] + ' TL;DR: '
-        line[0] = line[0].strip()
-        line[0] = line[0].replace(" n't", "n't")
-        input_ids = tokenizer(line,
-                              return_tensors="pt",
-                              max_length=seq_len,
-                              padding=True,
-                              truncation=True).input_ids.to(device)
-        model(input_ids)
+    for data in tqdm(dataloader, desc="calibrating model"):
+        data = data.to(model.device)
+        model(data)
     for h in hooks:
         h.remove()
     return act_scales
@@ -1022,10 +1008,117 @@ def convert_hf_llama(hf_model,
     return weights
 
 
+def get_tokenizer(ckpt_path, model_type=None):
+    print(f"Initializing tokenizer from {ckpt_path}")
+    tokenizer = AutoTokenizer.from_pretrained(
+        ckpt_path,
+        padding_side="left",
+        trust_remote_code=True,
+    )
+    if model_type and model_type == "qwen":
+        # qwen use token id 151643 as pad and eos tokens
+        tokenizer.pad_token = tokenizer.convert_ids_to_tokens(151643)
+        tokenizer.eos_token = tokenizer.convert_ids_to_tokens(151643)
+
+    # can't set attribute 'pad_token' for "<unk>"
+    if tokenizer.pad_token != "<unk>":  # nosec B105
+        tokenizer.pad_token = tokenizer.eos_token
+    if tokenizer.pad_token is None:
+        tokenizer.pad_token = tokenizer.eos_token
+    assert tokenizer.pad_token is not None, f"Pad token for {model_type} cannot be set!"
+
+    return tokenizer
+
+
+def get_calib_dataloader(data="cnn_dailymail",
+                         tokenizer=None,
+                         batch_size=1,
+                         calib_size=512,
+                         block_size=512,
+                         device=None,
+                         config: Optional[CalibrationConfig] = None):
+    if config is None:
+        config = CalibrationConfig(
+            dataset=data,
+            batch_size=batch_size,
+            max_samples=calib_size,
+            max_seq_length=block_size,
+            formatting_func=None,
+            truncation=True
+        )
+    else:
+        print(f'Using parameters from CalibrationConfig and ignoring others')
+    print(f"Loading calibration dataset {config.dataset}")
+    if config.dataset == "pileval":
+        dataset = load_dataset(
+            "json",
+            data_files="https://the-eye.eu/public/AI/pile/val.jsonl.zst",
+            split="train")
+        dataset = dataset["text"]
+    elif config.dataset == "cnn_dailymail":
+        dataset = load_dataset("cnn_dailymail", name="3.0.0", split="train")
+
+        def formatting_func(sample):
+            text = sample["article"] + ' TL;DR: '
+            text = text.strip()
+            text = text.replace(" n't", "n't")
+            return {"text": text}
+
+        dataset = dataset.map(formatting_func)["text"]
+
+    else:
+        print(f"Loading custom dataset from {config.dataset}")
+        dataset = load_dataset(
+            "json",
+            data_files=config.dataset
+        )["train"]
+        if config.formatting_func is not None:
+            dataset = dataset.map(config.formatting_func)
+        dataset = dataset["text"]
+    
+    if config.truncation:
+        batch_encoded = tokenizer(dataset[:config.max_samples],
+                                  return_tensors="pt",
+                                  padding=True,
+                                  truncation=True,
+                                  max_length=config.max_seq_length)
+        
+        if device:
+            batch_encoded = batch_encoded.to(device)
+        batch_encoded = batch_encoded["input_ids"]
+    else:
+        all_batch_encoded = []
+        for sample in tqdm(dataset, desc="Tokenizing dataset"):
+            all_batch_encoded.append(tokenizer(sample,
+                                       return_tensors="pt",
+                                       truncation=False)["input_ids"][0])
+        
+        all_batch_encoded.sort(reverse=True, key=lambda x: x.shape[0])
+
+        batch_encoded = []
+        for sample in all_batch_encoded:
+            if len(sample) > config.max_seq_length:
+                continue
+            if device:
+                sample = sample.to(device)
+            batch_encoded.append(sample)
+            if len(batch_encoded) >= config.max_samples:
+                break
+
+    print(f'Selected {len(batch_encoded)} calibration samples')
+
+    calib_dataloader = DataLoader(batch_encoded,
+                                  batch_size=config.batch_size,
+                                  shuffle=False)
+
+    return calib_dataloader
+
+
 def smooth_quant(model,
                  model_dir,
                  dataset_cache_dir,
-                 smoothquant: Optional[float] = None):
+                 smoothquant: Optional[float] = None,
+                 calib_config: Optional[CalibrationConfig] = None):
     assert model is not None
     act_range = {}
     llama_qkv_para = {}
@@ -1034,16 +1127,15 @@ def smooth_quant(model,
 
     os.environ["TOKENIZERS_PARALLELISM"] = os.environ.get(
         "TOKENIZERS_PARALLELISM", "false")
-    dataset = load_dataset("ccdv/cnn_dailymail",
-                           '3.0.0',
-                           cache_dir=dataset_cache_dir)
+    tokenizer = get_tokenizer(model_dir)
+    dataloader = get_calib_dataloader(data="cnn_dailymail",
+                                      tokenizer=tokenizer,
+                                      config=calib_config)
 
     act_range = capture_activation_range(
         model,
-        AutoTokenizer.from_pretrained(model_dir,
-                                      trust_remote_code=True,
-                                      use_fast=False,
-                                      padding_side='left'), dataset)
+        dataloader
+    )
     if smoothquant is not None:
         smooth_llama_model(model, act_range, smoothquant, llama_qkv_para,
                            llama_smoother)
@@ -1204,7 +1296,8 @@ def quantize(dtype,
              quantization: QuantConfig,
              *,
              override_fields,
-             dataset_cache_dir: Optional[str] = None):
+             dataset_cache_dir: Optional[str] = None,
+             calib_config: Optional[CalibrationConfig] = None):
     '''
         Quantize the save the model as TRT-LLM checkpoint to output_dir
     '''
@@ -1242,7 +1335,8 @@ def quantize(dtype,
         torch_dtype='auto' if not use_smooth_quant else torch.float16,
         trust_remote_code=True)
     act_range, llama_qkv_para, llama_smoother = smooth_quant(
-        model, model_dir, dataset_cache_dir, quantization.smoothquant_val)
+        model, model_dir, dataset_cache_dir, quantization.smoothquant_val,
+        calib_config=calib_config)
 
     for rank in range(mapping.world_size):
         # To avoid changing the mapping arg in-place, also the given mapping from caller is rank agnostic, since quantize is called from only one rank

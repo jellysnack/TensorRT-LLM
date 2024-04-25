@@ -21,7 +21,9 @@ import json
 import random
 import sys
 import time
+from typing import Optional
 
+from tqdm import tqdm
 import numpy as np
 import safetensors
 import torch
@@ -31,6 +33,7 @@ from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer
 
 from ..logger import logger
 from .mode import QuantAlgo
+from .config import CalibrationConfig
 
 EMPTY_CFG = {
     "quant_cfg": {
@@ -187,31 +190,72 @@ def get_calib_dataloader(data="cnn_dailymail",
                          batch_size=1,
                          calib_size=512,
                          block_size=512,
-                         device=None):
-    print("Loading calibration dataset")
-    if data == "pileval":
+                         device=None,
+                         config: Optional[CalibrationConfig] = None):
+    if config is None:
+        config = CalibrationConfig(
+            dataset=data,
+            batch_size=batch_size,
+            max_samples=calib_size,
+            max_seq_length=block_size,
+            formatting_func=None,
+            truncation=True
+        )
+    else:
+        print(f'Using parameters from CalibrationConfig and ignoring others')
+    print(f"Loading calibration dataset {config.dataset}")
+    if config.dataset == "pileval":
         dataset = load_dataset(
             "json",
             data_files="https://the-eye.eu/public/AI/pile/val.jsonl.zst",
             split="train")
-        dataset = dataset["text"][:calib_size]
-    elif data == "cnn_dailymail":
+        dataset = dataset["text"]
+    elif config.dataset == "cnn_dailymail":
         dataset = load_dataset("cnn_dailymail", name="3.0.0", split="train")
-        dataset = dataset["article"][:calib_size]
+        dataset = dataset["article"]
     else:
-        raise NotImplementedError
+        print(f"Loading custom dataset from {config.dataset}")
+        dataset = load_dataset(
+            "json",
+            data_files=config.dataset
+        )["train"]
+        if config.formatting_func is not None:
+            dataset = dataset.map(config.formatting_func)
+        dataset = dataset["text"]
+    
+    if config.truncation:
+        batch_encoded = tokenizer(dataset[:config.max_samples],
+                                  return_tensors="pt",
+                                  padding=True,
+                                  truncation=True,
+                                  max_length=config.max_seq_length)
+        
+        if device:
+            batch_encoded = batch_encoded.to(device)
+        batch_encoded = batch_encoded["input_ids"]
+    else:
+        all_batch_encoded = []
+        for sample in tqdm(dataset, desc="Tokenizing dataset"):
+            all_batch_encoded.append(tokenizer(sample,
+                                       return_tensors="pt",
+                                       truncation=False)["input_ids"][0])
+        
+        all_batch_encoded.sort(reverse=True, key=lambda x: x.shape[0])
 
-    batch_encoded = tokenizer.batch_encode_plus(dataset,
-                                                return_tensors="pt",
-                                                padding=True,
-                                                truncation=True,
-                                                max_length=block_size)
-    if device:
-        batch_encoded = batch_encoded.to(device)
-    batch_encoded = batch_encoded["input_ids"]
+        batch_encoded = []
+        for sample in all_batch_encoded:
+            if len(sample) > config.max_seq_length:
+                continue
+            if device:
+                sample = sample.to(device)
+            batch_encoded.append(sample)
+            if len(batch_encoded) >= config.max_samples:
+                break
+
+    print(f'Selected {len(batch_encoded)} calibration samples')
 
     calib_dataloader = DataLoader(batch_encoded,
-                                  batch_size=batch_size,
+                                  batch_size=config.batch_size,
                                   shuffle=False)
 
     return calib_dataloader
@@ -242,7 +286,8 @@ def quantize_model(model, quant_cfg, calib_dataloader=None):
 
 def quantize_and_export(*, model_dir, dtype, device, qformat, kv_cache_dtype,
                         calib_size, batch_size, awq_block_size, output_dir,
-                        tp_size, pp_size, seed, max_seq_length):
+                        tp_size, pp_size, seed, max_seq_length,
+                        calib_config: Optional[CalibrationConfig] = None):
     '''
         Load model from the model_dir, call AMMO to quantize the model, and then export
         the quantized model as TRT-LLM checkpoint
@@ -292,6 +337,7 @@ def quantize_and_export(*, model_dir, dtype, device, qformat, kv_cache_dtype,
             batch_size=batch_size,
             calib_size=calib_size,
             device=device,
+            config=calib_config
         )
 
         if qformat in quant_cfg_choices():

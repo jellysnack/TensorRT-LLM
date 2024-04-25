@@ -21,7 +21,7 @@ from ..layers.lora import Lora
 from ..logger import logger
 from ..mapping import Mapping
 from ..module import Module, ModuleList
-from ..quantization import QuantMode
+from ..quantization import QuantMode, CalibrationConfig
 from ..quantization.layers import FP8Linear
 from ..quantization.mode import W8A8_SQ_PLUGIN_LIST, QuantAlgo
 from ..top_model_mixin import TopModelMixin
@@ -555,6 +555,8 @@ class PretrainedModel(Module,
         calib_batch_size=1,
         random_seed=1234,
         tokenizer_max_seq_length=2048,
+        
+        calib_config: Optional[CalibrationConfig] = None
     ):
         if mapping is None:  # single gpu
             mapping = Mapping()
@@ -578,6 +580,7 @@ class PretrainedModel(Module,
             seed=random_seed,
             max_seq_length=tokenizer_max_seq_length,
             awq_block_size=quant_config.group_size,
+            calib_config=calib_config
         )
 
 
