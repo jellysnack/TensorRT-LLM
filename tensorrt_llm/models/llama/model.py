@@ -25,7 +25,7 @@ from ...lora_manager import LoraBuildConfig, use_lora
 from ...mapping import Mapping
 from ...module import Module
 from ...plugin import init_all_reduce_helper
-from ...quantization import W8A8_SQ_PLUGIN_LIST, QuantAlgo
+from ...quantization import W8A8_SQ_PLUGIN_LIST, QuantAlgo, CalibrationConfig
 from ..modeling_utils import (DecoderLayerList, DecoderModelForCausalLM,
                               PretrainedConfig, QuantConfig)
 
@@ -331,6 +331,7 @@ class LLaMAForCausalLM(DecoderModelForCausalLM):
         calib_batch_size=1,
         random_seed=1234,
         tokenizer_max_seq_length=2048,
+        calib_config: Optional[CalibrationConfig] = None,
         **kwargs,
     ):
         DEFAULT_AMMO_FLOW = [
@@ -347,7 +348,8 @@ class LLaMAForCausalLM(DecoderModelForCausalLM):
                              calib_batches=calib_batches,
                              calib_batch_size=calib_batch_size,
                              random_seed=random_seed,
-                             tokenizer_max_seq_length=tokenizer_max_seq_length)
+                             tokenizer_max_seq_length=tokenizer_max_seq_length,
+                             calib_config=calib_config)
         else:
             # non-ammo, the legacy TRT-LLM native quantization algorithm:
             # sq, int4/int8 weights only, int8 kv cache
@@ -368,6 +370,7 @@ class LLaMAForCausalLM(DecoderModelForCausalLM):
                 quant_config,
                 override_fields=kwargs.get('override_fields', {}),
                 dataset_cache_dir=kwargs.get('dataset_cache_dir', None),
+                calib_config=calib_config
             )
 
     def use_lora(self, lora_config: LoraBuildConfig):

@@ -1,6 +1,46 @@
+import json
 import argparse
+from typing import Optional, Dict, Callable
 
-from tensorrt_llm.quantization import quantize_and_export
+from tensorrt_llm.quantization import quantize_and_export, CalibrationConfig
+
+
+def create_formatting_func(formatting_func_config: Dict) -> Callable:
+    def formatting_func(sample):
+        text_parts = []
+        for part in formatting_func_config['template']:
+            if part['type'] == 'from_sample':
+                if part['key'] not in sample:
+                    raise ValueError(f'Unknown sample key. The actual are: {list(sample.keys())}')
+                text_parts.append(sample[part['key']])
+            elif part['type'] == 'text':
+                text_parts.append(part['text'])
+            else:
+                raise ValueError(f'Unknwon text part type: {part["type"]}')
+            
+        text = ' '.join(text_parts) # TODO space?
+
+        for old, new in formatting_func_config['replacement_rules'].items():
+            text = text.replace(old, new)
+
+        return {"text": text}
+    
+    return formatting_func
+
+
+def load_calibration_config(calib_config_path: Optional[str]) -> Optional[CalibrationConfig]:
+    if calib_config_path is None:
+        return None
+    
+    with open(calib_config_path) as f:
+        calib_config = json.load(f)
+
+    if calib_config['formatting_func'] is not None:
+        calib_config['formatting_func'] = create_formatting_func(calib_config['formatting_func'])
+
+    return CalibrationConfig.from_dict(calib_config)
+
+
 
 if __name__ == "__main__":
     DEFAULT_RAND_SEED = 1234
@@ -29,7 +69,7 @@ if __name__ == "__main__":
     parser.add_argument("--max_seq_length",
                         help="Max sequence length to init the tokenizers",
                         type=int,
-                        default=DEFAULT_MAX_SEQ_LEN)
+                        default=None)
 
     parser.add_argument("--batch_size",
                         help="Batch size for calibration.",
@@ -47,7 +87,11 @@ if __name__ == "__main__":
                         help="KV Cache dtype.",
                         default=None,
                         choices=["int8", "fp8", None])
+    parser.add_argument("--calibration_config", type=str, default=None,
+                        help='Path to a calibration config')
     args = parser.parse_args()
+
+    calibration_config = load_calibration_config(args.calibration_config)
 
     quantize_and_export(model_dir=args.model_dir,
                         dtype=args.dtype,
@@ -61,4 +105,5 @@ if __name__ == "__main__":
                         batch_size=args.batch_size,
                         awq_block_size=args.awq_block_size,
                         seed=args.seed,
-                        max_seq_length=args.max_seq_length)
+                        max_seq_length=args.max_seq_length,
+                        calib_config=calibration_config)
