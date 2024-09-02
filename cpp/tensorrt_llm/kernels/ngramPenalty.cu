@@ -9,7 +9,7 @@ namespace tensorrt_llm
 namespace kernels
 {
 
-__global__ void calc_ngram_penalty(int32_t* workspace,
+__global__ void calc_ngram_penalty(TokenIdType* workspace,
                                    SizeType32 const* inputLengths,
                                    SizeType32 const* sequenceLengths,
                                    TokenIdType const** outputIdsPtr,
@@ -96,7 +96,7 @@ __global__ void calc_ngram_penalty(int32_t* workspace,
     }
 }
 
-void invokeNgramPenalty(int32_t* workspace,
+void invokeNgramPenalty(TokenIdType* workspace,
                         SizeType32 const* inputLengths,
                         SizeType32 const* sequenceLengths,
                         TokenIdType const** outputIdsPtr,
@@ -113,7 +113,7 @@ void invokeNgramPenalty(int32_t* workspace,
     dim3 block(1024);
     dim3 grid(batchSize);
 
-    cudaMemsetAsync(workspace, 0, batchSize * vocabSize * sizeof(int32_t), stream);
+    cudaMemsetAsync(workspace, 0, batchSize * vocabSize * sizeof(TokenIdType), stream);
 
     // allocate shared memory of [blockDim + 2*(maxNgramSize - 1)] size, 
     // where 2*(maxNgramSize - 1) is for boundary token's ngram and for most recent generated tokens
