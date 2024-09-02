@@ -19,9 +19,13 @@
 #include "tensorrt_llm/common/cudaUtils.h"
 #include "tensorrt_llm/kernels/ngramPenalty.h"
 #include "tensorrt_llm/kernels/penaltyKernels.h"
+#include "tensorrt_llm/layers/decodingParams.h"
 #include "tensorrt_llm/layers/defaultDecodingParams.h"
 #include "tensorrt_llm/layers/layerUtils.h"
 #include "tensorrt_llm/runtime/bufferManager.h"
+#include "tensorrt_llm/runtime/common.h"
+#include "tensorrt_llm/runtime/iBuffer.h"
+#include "tensorrt_llm/runtime/iTensor.h"
 
 #include <algorithm>
 
@@ -276,14 +280,14 @@ void PenaltyLayer<T>::forwardAsync(
 
     if (mUseNgramPenalty)
     {
-        TLLM_CHECK_WITH_INFO(beamWidth == 1, "ngram penalty does not support beam size > 1");
+        TLLM_CHECK_WITH_INFO(localDecoderDomain.getBeamWidth() == 1, "ngram penalty does not support beam size > 1");
         if (repetitionPenalties)
         {
-            invokeNgramPenalty(mPenaltyWorkspaceDevice,
+            invokeNgramPenalty(bufferCastOrNull<TokenIdType>(mPenaltyWorkspaceDevice),
                                inputLengths,
-                               outputs.sequence_length->template getPtr<int32_t>(),
-                               outputs.output_ids_ptr.template getPtr<int32_t const*>(),
-                               reinterpret_cast<FinishedState*>(params.finished.value_or(Tensor{}).template getPtr<FinishedState::UnderlyingType>()),
+                               bufferCast<SizeType32>(*outputs->sequenceLength.value()),
+                               bufferCast<TokenIdType const*>(*outputs->outputIdsPtr),
+                               reinterpret_cast<FinishedState const*>(bufferCastOrNull<FinishedState::UnderlyingType>(params->finished.value_or(nullptr))),
                                batchSlots,
                                localDecoderDomain.getBatchSize(),
                                mDecoderDomain.getVocabSize(),
