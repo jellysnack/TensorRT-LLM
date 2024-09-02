@@ -15,6 +15,7 @@
 from .mode import (KV_CACHE_QUANT_ALGO_LIST, MODELOPT_FLOW_QUANTIZATIONS,
                    QUANT_ALGO_LIST, W8A8_SQ_PLUGIN_LIST, QuantAlgo, QuantMode)
 from .quantize_by_modelopt import quantize_and_export, quantize_nemo_and_export
+from .config import CalibrationConfig
 
 __all__ = [
     'QUANT_ALGO_LIST',
@@ -25,4 +26,5 @@ __all__ = [
     'QuantMode',
     'quantize_and_export',
     'quantize_nemo_and_export',
+    'CalibrationConfig'
 ]

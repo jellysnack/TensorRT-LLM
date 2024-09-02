@@ -14,12 +14,15 @@
 # limitations under the License.
 import json
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Dict, Callable
+
 
 from transformers import AutoTokenizer, LlamaTokenizer, T5Tokenizer
 
 from tensorrt_llm.bindings import GptJsonConfig
 from tensorrt_llm.builder import get_engine_version
+from tensorrt_llm.quantization import CalibrationConfig
+
 
 DEFAULT_HF_MODEL_DIRS = {
     'BaichuanForCausalLM': 'baichuan-inc/Baichuan-13B-Chat',
@@ -368,3 +371,39 @@ def add_common_args(parser):
     )
 
     return parser
+
+
+def create_formatting_func(formatting_func_config: Dict) -> Callable:
+    def formatting_func(sample):
+        text_parts = []
+        for part in formatting_func_config['template']:
+            if part['type'] == 'from_sample':
+                if part['key'] not in sample:
+                    raise ValueError(f'Unknown sample key. The actual are: {list(sample.keys())}')
+                text_parts.append(sample[part['key']])
+            elif part['type'] == 'text':
+                text_parts.append(part['text'])
+            else:
+                raise ValueError(f'Unknwon text part type: {part["type"]}')
+
+        text = ' '.join(text_parts) # TODO space?
+
+        for old, new in formatting_func_config['replacement_rules'].items():
+            text = text.replace(old, new)
+
+        return {"text": text}
+
+    return formatting_func
+
+
+def load_calibration_config(calib_config_path: Optional[str]) -> Optional[CalibrationConfig]:
+    if calib_config_path is None:
+        return None
+
+    with open(calib_config_path) as f:
+        calib_config = json.load(f)
+
+    if calib_config['formatting_func'] is not None:
+        calib_config['formatting_func'] = create_formatting_func(calib_config['formatting_func'])
+
+    return CalibrationConfig.from_dict(calib_config)
