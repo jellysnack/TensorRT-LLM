@@ -5,6 +5,9 @@ import torch.multiprocessing as mp
 from tensorrt_llm.quantization import (quantize_and_export,
                                        quantize_nemo_and_export)
 
+from ..utils import load_calibration_config
+
+
 mp.set_start_method("spawn", force=True)
 
 if __name__ == "__main__":
@@ -100,8 +103,12 @@ if __name__ == "__main__":
                         default=False,
                         action='store_true',
                         help="whether to quantize the weights of medusa heads")
+    parser.add_argument("--calibration_config", type=str, default=None,
+                        help='Path to a calibration config')
 
     args = parser.parse_args()
+
+    calibration_config = load_calibration_config(args.calibration_config)
 
     if args.model_dir is not None:
         quantize_and_export(
@@ -125,7 +132,8 @@ if __name__ == "__main__":
             max_draft_len=args.max_draft_len,
             medusa_hidden_act=args.medusa_hidden_act,
             medusa_model_dir=args.medusa_model_dir,
-            quant_medusa_head=args.quant_medusa_head)
+            quant_medusa_head=args.quant_medusa_head,
+            calib_config=calibration_config)
     elif args.nemo_ckpt_path is not None:
         quantize_nemo_and_export(nemo_ckpt_path=args.nemo_ckpt_path,
                                  decoder_type=args.decoder_type,

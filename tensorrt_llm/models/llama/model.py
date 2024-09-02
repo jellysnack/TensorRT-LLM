@@ -30,6 +30,7 @@ from ..convert_utils import has_safetensors
 from ..model_weights_loader import ModelWeightsLoader
 from ..modeling_utils import (DecoderLayerList, DecoderModelForCausalLM,
                               QuantConfig, check_share_embedding)
+from ...quantization import CalibrationConfig
 from .config import LLaMAConfig
 from .convert import (load_hf_llama, load_weights_from_gptq,
                       load_weights_from_hf_by_shard, load_weights_from_hf_model,
@@ -417,6 +418,7 @@ class LLaMAForCausalLM(DecoderModelForCausalLM):
         calib_max_seq_length: int = 512,
         random_seed: int = 1234,
         tokenizer_max_seq_length: int = 2048,
+        calib_config: Optional[CalibrationConfig] = None,
         **kwargs,
     ):
         if quant_config.requires_modelopt_quantization:
@@ -432,7 +434,8 @@ class LLaMAForCausalLM(DecoderModelForCausalLM):
                              calib_batch_size=calib_batch_size,
                              calib_max_seq_length=calib_max_seq_length,
                              random_seed=random_seed,
-                             tokenizer_max_seq_length=tokenizer_max_seq_length)
+                             tokenizer_max_seq_length=tokenizer_max_seq_length,
+                             calib_config=calib_config)
         elif quant_config.requires_calibration:
             # non-modelopt quantization flow
             from . import convert
@@ -441,6 +444,7 @@ class LLaMAForCausalLM(DecoderModelForCausalLM):
                                                    dtype=dtype,
                                                    mapping=mapping,
                                                    quant_config=quant_config,
+                                                   calib_config=calib_config,
                                                    **kwargs)
             trust_remote_code = kwargs.pop("trust_remote_code", True)
 
@@ -449,7 +453,8 @@ class LLaMAForCausalLM(DecoderModelForCausalLM):
                              config=config,
                              device=device,
                              calib_dataset=calib_dataset,
-                             trust_remote_code=trust_remote_code)
+                             trust_remote_code=trust_remote_code,
+                             calib_config=calib_config)
         else:
             raise ValueError(
                 f"The quant_config ({quant_config}) does not require calibration, try {cls.__name__}.from_hugging_face instead."

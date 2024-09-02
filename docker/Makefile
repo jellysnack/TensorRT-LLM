@@ -3,7 +3,7 @@ BASE_IMAGE         ?= $(shell grep 'ARG BASE_IMAGE=' Dockerfile.multi | grep -o 
 BASE_TAG           ?= $(shell grep 'ARG BASE_TAG=' Dockerfile.multi | grep -o '=.*' | tr -d '="')
 # Name of the new image
 IMAGE_NAME         ?= tensorrt_llm
-IMAGE_TAG          ?= latest
+IMAGE_TAG          ?= ngram_penalty_v0.12.0
 
 # Local user information
 USER_ID            ?= $(shell id --user)

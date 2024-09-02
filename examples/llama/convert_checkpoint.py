@@ -3,6 +3,7 @@ import json
 import os
 import time
 import traceback
+from typing import Dict, Callable, Optional
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from transformers import AutoConfig
@@ -15,6 +16,12 @@ from tensorrt_llm.mapping import Mapping
 from tensorrt_llm.models import LLaMAForCausalLM
 from tensorrt_llm.models.modeling_utils import QuantConfig
 from tensorrt_llm.quantization import QuantAlgo
+
+import sys
+from os.path import abspath, dirname
+sys.path.append(abspath(dirname(__file__) + '/../'))
+
+from utils import load_calibration_config
 
 
 def parse_arguments():
@@ -233,7 +240,12 @@ def parse_arguments():
         'Only used to remove the duplicated kv heads of llama-3.1 405B HF model.'
     )
     parser.add_argument('--log_level', type=str, default='info')
-
+    parser.add_argument(
+        '--calibration_config',
+        type=str,
+        default=None,
+        help='Path to a calibration config'
+    )
     args = parser.parse_args()
     # changing the default to be consistent as the cli help said.
     if args.moe_num_experts and args.moe_top_k == 0:
@@ -383,6 +395,7 @@ def convert_and_save_hf(args):
     override_fields.update(args_to_build_options(args))
 
     quant_config = args_to_quant_config(args)
+    calib_config = load_calibration_config(args.calibration_config)
 
     try:
         hf_config = AutoConfig.from_pretrained(model_dir,
@@ -408,6 +421,7 @@ def convert_and_save_hf(args):
             quant_config=quant_config,
             device='cpu' if args.load_model_on_cpu else 'cuda',
             calib_dataset=args.calib_dataset,
+            calib_config=calib_config,
             **override_fields)
     else:
         # When not loading by shard, preload one complete model and then slice per rank weights from this

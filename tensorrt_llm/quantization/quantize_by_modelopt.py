@@ -22,10 +22,12 @@ import os
 import random
 import sys
 import time
+from typing import Optional
 
 import numpy as np
 import safetensors
 import torch
+from tqdm import tqdm
 from datasets import load_dataset
 from safetensors.torch import load_file, save_file
 from torch.utils.data import DataLoader
@@ -35,6 +37,7 @@ from .._utils import release_gc
 from ..logger import logger
 from ..mapping import Mapping
 from .mode import QuantAlgo
+from .config import CalibrationConfig
 
 EMPTY_CFG = {
     "quant_cfg": {
@@ -217,38 +220,78 @@ def get_calib_dataloader(dataset_name_or_dir="cnn_dailymail",
                          tokenizer=None,
                          batch_size=1,
                          calib_size=512,
-                         block_size=512):
+                         block_size=512,
+                         config: Optional[CalibrationConfig] = None):
+    if config is None:
+        config = CalibrationConfig(
+            dataset=dataset_name_or_dir,
+            batch_size=batch_size,
+            max_samples=calib_size,
+            max_seq_length=block_size,
+            formatting_func=None,
+            truncation=True
+        )
+        logger.info("Creating calibration config from provided arguments")
+    else:
+        logger.info("Using provided calibrationConfig and ignoring other arguments")
     logger.info("Loading calibration dataset")
-    if dataset_name_or_dir == "pileval":
+    if config.dataset == "pileval":
         dataset = load_dataset(
             "json",
             data_files="https://the-eye.eu/public/AI/pile/val.jsonl.zst",
             split="train")
-        dataset = dataset["text"][:calib_size]
-    elif "cnn_dailymail" in dataset_name_or_dir:
-        dataset = load_dataset(dataset_name_or_dir, name="3.0.0", split="train")
-        dataset = dataset["article"][:calib_size]
-    elif os.path.isdir(dataset_name_or_dir):
+        dataset = dataset["text"]
+    elif "cnn_dailymail" in config.dataset:
+        dataset = load_dataset(config.dataset, name="3.0.0", split="train")
+        dataset = dataset["article"]
+    elif os.path.isdir(config.dataset):
         logger.info(
-            f"Recognized local dataset repo {dataset_name_or_dir} for calibration; "
+            f"Recognized local dataset repo {config.dataset} for calibration; "
             "assuming the calibration data are in the train split and text column."
         )
-        dataset = load_dataset(dataset_name_or_dir, split="train")
-        dataset = dataset["text"][:calib_size]
+        dataset = load_dataset(config.dataset, split="train")
+        dataset = dataset["text"]
     else:
-        raise NotImplementedError(
-            f"Unsupported dataset name or local repo directory: {dataset_name_or_dir}."
-        )
+        logger.info(f"Loading custom dataset from {config.dataset}")
+        dataset = load_dataset(
+            "json",
+            data_files=config.dataset
+        )["train"]
+        if config.formatting_func is not None:
+            dataset = dataset.map(config.formatting_func)
+        dataset = dataset["text"]
 
-    batch_encoded = tokenizer.batch_encode_plus(dataset,
-                                                return_tensors="pt",
-                                                padding=True,
-                                                truncation=True,
-                                                max_length=block_size)
-    batch_encoded = batch_encoded["input_ids"]
+    if config.truncation:
+        batch_encoded = tokenizer(dataset[:config.max_samples],
+                                  return_tensors="pt",
+                                  padding=True,
+                                  truncation=True,
+                                  max_length=config.max_seq_length)
+
+        batch_encoded = batch_encoded["input_ids"]
+    else:
+        all_batch_encoded = []
+        for sample in tqdm(dataset, desc="Tokenizing dataset"):
+            tokenized_sample = tokenizer(sample,
+                                         return_tensors="pt",
+                                         truncation=False)
+            assert len(tokenized_sample["input_ids"]) == 1, "Expected to get batch dimension first"
+            all_batch_encoded.append(tokenized_sample["input_ids"][0])
+
+        all_batch_encoded.sort(reverse=True, key=lambda x: x.shape[0])
+
+        batch_encoded = []
+        for sample in all_batch_encoded:
+            if len(sample) > config.max_seq_length:
+                continue
+            batch_encoded.append(sample)
+            if len(batch_encoded) >= config.max_samples:
+                break
+
+    logger.info(f'Selected {len(batch_encoded)} calibration samples')
 
     calib_dataloader = DataLoader(batch_encoded,
-                                  batch_size=batch_size,
+                                  batch_size=config.batch_size,
                                   shuffle=False)
 
     return calib_dataloader
@@ -366,7 +409,8 @@ def quantize_and_export(*,
                         max_draft_len=None,
                         medusa_hidden_act=None,
                         medusa_model_dir=None,
-                        quant_medusa_head=None):
+                        quant_medusa_head=None,
+                        calib_config: Optional[CalibrationConfig] = None):
     '''
         Load model from the model_dir, call Modelopt to quantize the model, and then export
         the quantized model as TRT-LLM checkpoint
@@ -420,6 +464,7 @@ def quantize_and_export(*,
             batch_size=batch_size,
             calib_size=calib_size,
             block_size=calib_max_seq_length,
+            calib_config=calib_config
         )
 
         if qformat in quant_cfg_choices():
