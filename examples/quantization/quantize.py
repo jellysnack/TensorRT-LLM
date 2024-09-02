@@ -1,12 +1,15 @@
+import sys
 import argparse
+from os.path import abspath, dirname
 
 import torch.multiprocessing as mp
 
 from tensorrt_llm.quantization import (quantize_and_export,
                                        quantize_nemo_and_export)
 
-from ..utils import load_calibration_config
+sys.path.append(abspath(dirname(__file__) + '/../'))
 
+from utils import load_calibration_config
 
 mp.set_start_method("spawn", force=True)
 
@@ -71,7 +74,7 @@ if __name__ == "__main__":
     parser.add_argument("--tokenizer_max_seq_length",
                         help="Max sequence length to init the tokenizers",
                         type=int,
-                        default=2048)
+                        default=None)
 
     parser.add_argument("--batch_size",
                         help="Batch size for calibration.",

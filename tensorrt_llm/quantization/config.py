@@ -21,3 +21,9 @@ class CalibrationConfig:
             formatting_func=d['formatting_func'],
             truncation=d['truncation']
         )
+    
+    def to_dict(self):
+        result = dataclasses.asdict(self)
+        if result['formatting_func'] is not None:
+            result['formatting_func'] = '<cannot be printed>'
+        return result

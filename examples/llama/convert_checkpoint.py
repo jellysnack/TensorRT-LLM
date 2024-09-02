@@ -1,8 +1,10 @@
 import argparse
 import json
 import os
+import sys
 import time
 import traceback
+from os.path import abspath, dirname
 from typing import Dict, Callable, Optional
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
@@ -17,8 +19,6 @@ from tensorrt_llm.models import LLaMAForCausalLM
 from tensorrt_llm.models.modeling_utils import QuantConfig
 from tensorrt_llm.quantization import QuantAlgo
 
-import sys
-from os.path import abspath, dirname
 sys.path.append(abspath(dirname(__file__) + '/../'))
 
 from utils import load_calibration_config
