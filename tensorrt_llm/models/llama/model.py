@@ -444,7 +444,7 @@ class LLaMAForCausalLM(DecoderModelForCausalLM):
                                                    dtype=dtype,
                                                    mapping=mapping,
                                                    quant_config=quant_config,
-                                                   calib_config=calib_config,
+                                                   calib_config=calib_config.to_dict() if calib_config else None,
                                                    **kwargs)
             trust_remote_code = kwargs.pop("trust_remote_code", True)
 

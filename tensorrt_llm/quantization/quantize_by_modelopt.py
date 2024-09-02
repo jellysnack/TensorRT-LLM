@@ -464,7 +464,7 @@ def quantize_and_export(*,
             batch_size=batch_size,
             calib_size=calib_size,
             block_size=calib_max_seq_length,
-            calib_config=calib_config
+            config=calib_config
         )
 
         if qformat in quant_cfg_choices():

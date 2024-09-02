@@ -30,7 +30,7 @@ from tqdm import tqdm
 from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer
 from transformers.models.llama.modeling_llama import LlamaDecoderLayer
 from transformers.pytorch_utils import Conv1D
-from datasets import load_dataset
+from datasets import load_dataset, Dataset
 
 from ..._utils import pad_vocab_size, release_gc, str_dtype_to_torch
 from ...logger import logger
@@ -1116,9 +1116,10 @@ def get_calib_dataloader(dataset_name_or_dir="cnn_dailymail",
     logger.info("Loading calibration dataset")
     if is_original_api:
         dataset = load_calib_dataset(config.dataset)
+        dataset = Dataset.from_dict({"text": dataset})
 
-        def formatting_func(text):
-            text = text + ' TL;DR: '
+        def formatting_func(sample):
+            text = text["text"] + ' TL;DR: '
             text = text.strip()
             text = text.replace(" n't", "n't")
             return {"text": text}
