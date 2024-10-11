@@ -77,6 +77,7 @@ void PenaltyLayer<T>::initialize()
     if (env && std::string(env) == "true")
     {
         mUseNgramPenalty = true;
+        TLLM_LOG_INFO("Using custom ngram penalty");
     }
 
     TLLM_LOG_TRACE("%s stop", __PRETTY_FUNCTION__);
