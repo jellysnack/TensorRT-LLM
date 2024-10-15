@@ -285,7 +285,7 @@ void PenaltyLayer<T>::forwardAsync(std::shared_ptr<BaseDecodingOutputs> const& b
                                bufferCast<SizeType32>(*outputs->sequenceLength.value()),
                                bufferCast<TokenIdType const*>(*outputs->outputIdsPtr),
                                reinterpret_cast<FinishedState const*>(bufferCastOrNull<FinishedState::UnderlyingType>(params->finished.value_or(nullptr))),
-                               batchSlots,
+                               workspace->getDeviceBatchSlotsPtr(),
                                localDecoderDomain.getBatchSize(),
                                mDecoderDomain.getVocabSize(),
                                getStream());
