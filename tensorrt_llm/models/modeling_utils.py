@@ -29,7 +29,7 @@ from ..mapping import Mapping
 from ..module import Module, ModuleList
 from ..parameter import Parameter
 from ..plugin import init_all_reduce_helper
-from ..quantization import QuantMode
+from ..quantization import QuantMode, CalibrationConfig
 from ..quantization.layers import (WeightOnlyGroupwiseQuantLinear,
                                    WeightOnlyGroupwiseQuantRowLinear,
                                    WeightOnlyQuantLinear,
@@ -664,6 +664,7 @@ class PretrainedModel(Module,
         calib_max_seq_length: int = 512,
         random_seed: int = 1234,
         tokenizer_max_seq_length: int = 2048,
+        calib_config: Optional[CalibrationConfig] = None,
         **kwargs,
     ):
         config_cls = getattr(cls, 'config_class', None)
@@ -702,6 +703,7 @@ class PretrainedModel(Module,
             pp_size=config.mapping.pp_size,
             seed=random_seed,
             tokenizer_max_seq_length=tokenizer_max_seq_length,
+            calib_config=calib_config
         )
 
 
