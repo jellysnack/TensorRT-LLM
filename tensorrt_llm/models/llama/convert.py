@@ -190,6 +190,12 @@ def capture_activation_range(model,
             hooks.append(
                 m.register_forward_hook(
                     functools.partial(stat_input_hook, name=name)))
+            
+    if len(dataset) > num_samples:
+        print(
+            f"Using subset of the dataset for calibration"
+            f"dataset_size={len(dataset)}, but calib_size={num_samples}"
+        )
 
     for i in tqdm(range(num_samples), desc="calibrating model"):
         datapoint = dataset[i:i + 1]

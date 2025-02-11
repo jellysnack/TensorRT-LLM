@@ -216,6 +216,12 @@ def capture_activation_range(model,
                 m.register_forward_hook(
                     functools.partial(stat_input_hook, name=name)))
 
+    if len(dataset) > num_samples:
+        print(
+            f"Using subset of the dataset for calibration"
+            f"dataset_size={len(dataset)}, but calib_size={num_samples}"
+        )
+
     for i in tqdm(range(num_samples), desc="calibrating model"):
         line = dataset[i]
         if qwen_type == 'qwen':
@@ -915,7 +921,8 @@ def quantize(hf_model_dir: str,
              config: QWenConfig,
              calib_dataset='cnn_dailymail',
              calib_max_seq_length=512,
-             calib_truncate=True):
+             calib_truncate=True,
+             calib_size=512):
     '''
         Quantize the save the model as TRT-LLM checkpoint to output_dir
     '''
@@ -954,6 +961,7 @@ def quantize(hf_model_dir: str,
     chat_format = getattr(gen_config, 'chat_format', 'chatml')
     act_range = capture_activation_range(hf_model, config.qwen_type, tokenizer,
                                          dataset, system_prompt, chat_format,
+                                         num_samples=calib_size,
                                          seq_len=calib_max_seq_length, truncate=calib_truncate)
     qkv_para = {}
     # smoother for inputs of self_attn.o_proj and mlp.down_proj

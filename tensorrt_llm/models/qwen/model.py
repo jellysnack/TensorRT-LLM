@@ -500,12 +500,14 @@ class QWenForCausalLM(DecoderModelForCausalLM):
                                                   mapping=mapping,
                                                   quant_config=quant_config,
                                                   **kwargs)
+            assert calib_batch_size == 1
             convert.quantize(hf_model_dir,
                              output_dir,
                              config=config,
                              calib_dataset=calib_dataset,
                              calib_max_seq_length=calib_max_seq_length,
-                             calib_truncate=calib_truncate)
+                             calib_truncate=calib_truncate,
+                             calib_size=calib_batches)
         else:
             raise ValueError(
                 f"The quant_config ({quant_config}) does not require calibration, try {cls.__name__}.from_hugging_face instead."
