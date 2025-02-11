@@ -153,6 +153,26 @@ def parse_arguments():
         help=
         'N-way expert parallelism size for MOE, default is 1, which will do tp-only for MoE'
     )
+
+    parser.add_argument(
+        "--calib_size",
+        type=int,
+        default=512,
+        help=
+        "Number of samples for calibration. Set to -1 to use the whole dataset.",
+    )
+    parser.add_argument(
+        "--calib_max_seq_length",
+        type=int,
+        default=512,
+        help="Max Sequence length for calibration",
+    )
+    parser.add_argument(
+        '--disable_calib_truncate',
+        action='store_true',
+        default=False
+    )
+
     args = parser.parse_args()
     return args
 
@@ -262,6 +282,9 @@ def convert_and_save_hf(args):
                                  mapping=mapping,
                                  quant_config=quant_config,
                                  calib_dataset=args.calib_dataset,
+                                 calib_batches=args.calib_size,
+                                 calib_max_seq_length=args.calib_max_seq_length,
+                                 calib_truncate=not args.disable_calib_truncate,
                                  **override_fields)
     else:
 

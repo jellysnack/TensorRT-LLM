@@ -177,7 +177,8 @@ def capture_activation_range(model,
                              system_prompt,
                              chat_format,
                              num_samples=512,
-                             seq_len=512):
+                             seq_len=512,
+                             truncate=True):
     model.eval()
     device = next(model.parameters()).device
     act_scales = defaultdict(lambda: {"x": None, "y": None, "w": None})
@@ -215,12 +216,16 @@ def capture_activation_range(model,
                 m.register_forward_hook(
                     functools.partial(stat_input_hook, name=name)))
 
+    if len(dataset) > num_samples:
+        print(
+            f"Using subset of the dataset for calibration"
+            f"dataset_size={len(dataset)}, but calib_size={num_samples}"
+        )
+
     for i in tqdm(range(num_samples), desc="calibrating model"):
         line = dataset[i]
-        line = line + ' TL;DR: '
-        line = line.strip()
-        line = line.replace(" n't", "n't")
         if qwen_type == 'qwen':
+            assert truncate
             _, input_id_list = make_context(tokenizer=tokenizer,
                                             query=line,
                                             history=[],
@@ -235,8 +240,15 @@ def capture_activation_range(model,
             line_encoded = tokenizer(line,
                                      return_tensors="pt",
                                      max_length=seq_len,
-                                     padding=True,
-                                     truncation=True).input_ids.to(device)
+                                     truncation=truncate).input_ids
+
+            if not truncate:
+                if line_encoded.size(1) > seq_len:
+                    raise ValueError(
+                        f"Got truncation=False, but the sequence in dataset ({line_encoded.size(1)}) is larger than seq_len={seq_len}"
+                    )
+
+            line_encoded = line_encoded.to(device)
         model(line_encoded)
     for h in hooks:
         h.remove()
@@ -907,7 +919,10 @@ def convert_hf_qwen(hf_model,
 def quantize(hf_model_dir: str,
              output_dir: str,
              config: QWenConfig,
-             calib_dataset='cnn_dailymail'):
+             calib_dataset='cnn_dailymail',
+             calib_max_seq_length=512,
+             calib_truncate=True,
+             calib_size=512):
     '''
         Quantize the save the model as TRT-LLM checkpoint to output_dir
     '''
@@ -945,7 +960,9 @@ def quantize(hf_model_dir: str,
         gen_config = json.load(f)
     chat_format = getattr(gen_config, 'chat_format', 'chatml')
     act_range = capture_activation_range(hf_model, config.qwen_type, tokenizer,
-                                         dataset, system_prompt, chat_format)
+                                         dataset, system_prompt, chat_format,
+                                         num_samples=calib_size,
+                                         seq_len=calib_max_seq_length, truncate=calib_truncate)
     qkv_para = {}
     # smoother for inputs of self_attn.o_proj and mlp.down_proj
     smoother = {}

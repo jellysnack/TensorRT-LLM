@@ -142,6 +142,12 @@ if __name__ == "__main__":
         "For example, if 'int4_awq' is in autoq_format, it can't be lower than 4.0."
     )
 
+    parser.add_argument(
+        '--disable_calib_truncate',
+        action='store_true',
+        default=False
+    )
+
     args = parser.parse_args()
 
     # auto_quantize_bits check
@@ -179,7 +185,8 @@ if __name__ == "__main__":
             medusa_model_dir=args.medusa_model_dir,
             quant_medusa_head=args.quant_medusa_head,
             auto_quantize_bits=args.auto_quantize_bits,
-            device_map=args.device_map)
+            device_map=args.device_map,
+            calib_truncate=not args.disable_calib_truncate)
     elif args.nemo_ckpt_path is not None:
         quantize_nemo_and_export(nemo_ckpt_path=args.nemo_ckpt_path,
                                  decoder_type=args.decoder_type,
