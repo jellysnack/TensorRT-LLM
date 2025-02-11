@@ -2,13 +2,13 @@ import os
 import json
 import random
 import argparse
-import dataclasses
 
 from enum import StrEnum
 from typing import Optional, Callable, Dict, Any
 
 import datasets
 import transformers
+import numpy as np
 
 import yt.wrapper as yt
 
@@ -22,29 +22,8 @@ class SampleSelectionStrategy(StrEnum):
     LONGEST = 'longest'
 
 
-@dataclasses.dataclass
-class CalibrationConfig:
-    batch_size: int
-    max_samples: int
-    max_seq_length: int
-    formatting_func: Optional[Callable] = None
-    truncation: bool = False
-
-    @classmethod
-    def from_dict(cls, d: Dict[str, Any]) -> 'CalibrationConfig':
-        return cls(
-            batch_size=d['batch_size'],
-            max_samples=d['max_samples'],
-            max_seq_length=d['max_seq_length'],
-            formatting_func=d['formatting_func'],
-            truncation=d['truncation']
-        )
-    
-    def to_dict(self):
-        result = dataclasses.asdict(self)
-        if result['formatting_func'] is not None:
-            result['formatting_func'] = '<cannot be printed>'
-        return result
+def default_formatting_func(sample):
+    return sample[TEXT_KEY]
 
 
 def create_formatting_func(formatting_func_config: Dict) -> Callable:
@@ -66,10 +45,11 @@ def create_formatting_func(formatting_func_config: Dict) -> Callable:
     return formatting_func
 
 
-
 def read_data(dataset_path: str) -> datasets.Dataset:
     yt_client = yt.YtClient(proxy=os.environ['YT_PROXY'], token=os.environ['YT_TOKEN'])
-    return datasets.Dataset.from_list(list(yt_client.read_table(dataset_path)))
+    x = list(yt_client.read_table(dataset_path))
+    random.shuffle(x)
+    return datasets.Dataset.from_list(x)
 
 
 def load_tokenizer(tokenizer_name_or_path: str) -> transformers.PreTrainedTokenizerBase:
@@ -82,8 +62,7 @@ def format(
     formatting_func: Callable
 ) -> datasets.Dataset:
     def fn(sample):
-        sample[text_key] = formatting_func(sample)
-        return sample
+        return {text_key: formatting_func(sample)}
     
     return dataset.map(fn, batched=False)
 
@@ -106,42 +85,74 @@ def tokenize(
     return dataset.map(fn, batched=False)
 
 
+def summary(dataset: datasets.Dataset) -> Dict[str, Any]:
+    QUANTILES = [0.5, 0.75, 0.9, 0.95, 0.99]
+
+    num_tokens = [len(d) for d in dataset['input_ids']]
+    num_tokens = np.array(num_tokens)
+
+    result = {
+        'num samples': len(num_tokens),
+        'min': int(num_tokens.min().item()),
+        'max': int(num_tokens.max().item()),
+        'mean': float(num_tokens.mean().item())
+    }
+
+    for value, q in zip(np.quantile(num_tokens, QUANTILES), QUANTILES):
+        result[f'q={q:.2f}'] = int(value)
+
+    return result
+
+
 # read table from yt or somewhere else preprocess and put it inside a directory for the next script
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
+    parser.add_argument('--seed', type=int, default=42)
     parser.add_argument('--dataset', type=str, required=True)
-    parser.add_argument('--calib-config', type=str, required=True)
+    parser.add_argument('--max-samples', type=int, default=None)
+    parser.add_argument('--max-seq-length', type=int, required=True)
+    parser.add_argument('--truncation', action='store_true', default=False)
+    parser.add_argument('--formatting-func', type=str, default=None)
     parser.add_argument('--sample-selection-strategy', type=SampleSelectionStrategy, required=True)
     parser.add_argument('--tokenizer-name-or-path', type=str, required=True)
     parser.add_argument('--save-dir', type=str, required=True)
     args = parser.parse_args()
 
+    random.seed(args.seed)
+
     dataset = read_data(args.dataset)
     tokenizer = load_tokenizer(args.tokenizer_name_or_path)
 
-    with open(args.calib_config) as f:
-        config = json.load(f)
-    if 'formatting_func' in config:
-        config['formatting_func'] = create_formatting_func(config['formatting_func'])
-    config = CalibrationConfig.from_dict(config)
+    formatting_func = default_formatting_func
+    if args.formatting_func is not None:
+        with open(args.formatting_func) as f:
+            formatting_func_config = json.load(f)
+        formatting_func = create_formatting_func(formatting_func_config)
 
-    assert args.sample_selection_strategy != SampleSelectionStrategy.LONGEST or not config.truncation
+    dataset = format(dataset, TEXT_KEY, formatting_func)
+    dataset = tokenize(dataset, TEXT_KEY, tokenizer, args.truncation, args.max_seq_length)
 
-    dataset = format(dataset, TEXT_KEY, config.formatting_func)
-    dataset = tokenize(dataset, TEXT_KEY, tokenizer, config.truncation, config.max_seq_length)
+    print('Full dataset stats:')
+    print(f'{json.dumps(summary(dataset), ensure_ascii=False, indent=4)}\n')
 
-    dataset = dataset.filter(lambda x: len(x['input_ids']) <= config.max_seq_length)
+    dataset = dataset.filter(lambda x: len(x['input_ids']) <= args.max_seq_length)
 
-    if args.sample_selection_strategy == SampleSelectionStrategy.FIRST:
-        calib_dataset = dataset[:config.max_samples]
-    elif args.sample_selection_strategy == SampleSelectionStrategy.RANDOM:
-        indices = list(range(0, len(dataset)))
-        if config.max_samples < len(dataset):
-            indices = random.sample(range(0, len(dataset)), k=config.max_seq_length)
-        calib_dataset = dataset.select(indices)
-    elif args.sample_selection_strategy == SampleSelectionStrategy.LONGEST:
-        dataset = sorted(dataset, key=lambda x: len(x['input_ids']), reverse=True)
-        calib_dataset = datasets.Dataset.from_list(dataset[:config.max_samples])
+    if args.max_samples is not None:
+        if args.sample_selection_strategy == SampleSelectionStrategy.FIRST:
+            calib_dataset = dataset.select(range(0, min(args.max_samples, len(dataset))))
+        elif args.sample_selection_strategy == SampleSelectionStrategy.RANDOM:
+            indices = list(range(0, len(dataset)))
+            if args.max_samples < len(dataset):
+                indices = random.sample(range(0, len(dataset)), k=args.max_samples)
+            calib_dataset = dataset.select(indices)
+        elif args.sample_selection_strategy == SampleSelectionStrategy.LONGEST:
+            dataset = sorted(dataset, key=lambda x: len(x['input_ids']), reverse=True)
+            calib_dataset = datasets.Dataset.from_list(dataset[:args.max_samples])
+    else:
+        calib_dataset = dataset
+
+    print('Calibration dataset stats:')
+    print(f'{json.dumps(summary(calib_dataset), ensure_ascii=False, indent=4)}')
 
     to_json_kwargs = {
         'force_ascii': False
