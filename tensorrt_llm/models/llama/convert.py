@@ -155,7 +155,8 @@ def capture_activation_range(model,
                              tokenizer,
                              dataset,
                              num_samples=512,
-                             seq_len=512):
+                             seq_len=512,
+                             truncate=True):
     model.eval()
     device = next(model.parameters()).device
     act_scales = defaultdict(lambda: {"x": None, "y": None, "w": None})
@@ -193,14 +194,18 @@ def capture_activation_range(model,
     for i in tqdm(range(num_samples), desc="calibrating model"):
         datapoint = dataset[i:i + 1]
         line = copy.copy(datapoint)
-        line[0] = line[0] + ' TL;DR: '
-        line[0] = line[0].strip()
-        line[0] = line[0].replace(" n't", "n't")
         input_ids = tokenizer(line,
                               return_tensors="pt",
                               max_length=seq_len,
-                              padding=True,
-                              truncation=True).input_ids.to(device)
+                              truncation=truncate).input_ids
+
+        if not truncate:
+            if input_ids.size(1) > seq_len:
+                raise ValueError(
+                    f"Got truncation=False, but the sequence in dataset ({input_ids.size(1)}) is larger than seq_len={seq_len}"
+                )
+
+        input_ids = input_ids.to(device)
         model(input_ids)
     for h in hooks:
         h.remove()
@@ -1112,7 +1117,8 @@ def quantize(hf_model_dir: str,
              calib_dataset: str = 'cnn_dailymail',
              trust_remote_code: bool = True,
              calib_batches: int = 512,
-             calib_max_seq_length: int = 512):
+             calib_max_seq_length: int = 512,
+             calib_truncate: bool = True):
     '''
         Quantize the save the model as TRT-LLM checkpoint to output_dir
     '''
@@ -1155,7 +1161,8 @@ def quantize(hf_model_dir: str,
                                          tokenizer,
                                          dataset,
                                          num_samples=calib_batches,
-                                         seq_len=calib_max_seq_length)
+                                         seq_len=calib_max_seq_length,
+                                         truncate=calib_truncate)
     qkv_para, smoother = {}, {}
     if use_smooth_quant:
         smooth_llama_model(hf_model, act_range, quant_config.smoothquant_val,

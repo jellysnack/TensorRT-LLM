@@ -267,6 +267,11 @@ def parse_arguments():
         'Only used to remove the duplicated kv heads of llama-3.1 405B HF model.'
     )
     parser.add_argument('--log_level', type=str, default='info')
+    parser.add_argument(
+        '--disable_calib_truncate',
+        action='store_true',
+        default=False
+    )
 
     args = parser.parse_args()
     # changing the default to be consistent as the cli help said.
@@ -487,6 +492,7 @@ def convert_and_save_hf(args):
             calib_dataset=args.calib_dataset,
             calib_batches=args.calib_size,
             calib_max_seq_length=args.calib_max_seq_length,
+            calib_truncate=not args.disable_calib_truncate,
             **override_fields)
     else:
         # When not loading by shard, preload one complete model and then slice per rank weights from this

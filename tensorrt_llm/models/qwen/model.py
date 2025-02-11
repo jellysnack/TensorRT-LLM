@@ -474,6 +474,7 @@ class QWenForCausalLM(DecoderModelForCausalLM):
         calib_max_seq_length=512,
         random_seed=1234,
         tokenizer_max_seq_length=2048,
+        calib_truncate=True,
         **kwargs,
     ):
         if quant_config.requires_modelopt_quantization:
@@ -488,7 +489,8 @@ class QWenForCausalLM(DecoderModelForCausalLM):
                              calib_batch_size=calib_batch_size,
                              calib_max_seq_length=calib_max_seq_length,
                              random_seed=random_seed,
-                             tokenizer_max_seq_length=tokenizer_max_seq_length)
+                             tokenizer_max_seq_length=tokenizer_max_seq_length,
+                             calib_truncate=calib_truncate)
         elif quant_config.requires_calibration:
             # non-modelopt quantization flow
             from . import convert
@@ -501,7 +503,9 @@ class QWenForCausalLM(DecoderModelForCausalLM):
             convert.quantize(hf_model_dir,
                              output_dir,
                              config=config,
-                             calib_dataset=calib_dataset)
+                             calib_dataset=calib_dataset,
+                             calib_max_seq_length=calib_max_seq_length,
+                             calib_truncate=calib_truncate)
         else:
             raise ValueError(
                 f"The quant_config ({quant_config}) does not require calibration, try {cls.__name__}.from_hugging_face instead."
