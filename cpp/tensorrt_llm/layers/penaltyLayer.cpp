@@ -17,6 +17,7 @@
 
 #include "penaltyLayer.h"
 #include "tensorrt_llm/common/cudaUtils.h"
+#include "tensorrt_llm/common/logger.h"
 #include "tensorrt_llm/kernels/ngramPenalty.h"
 #include "tensorrt_llm/common/nvtxUtils.h"
 #include "tensorrt_llm/kernels/penaltyKernels.h"
@@ -78,6 +79,7 @@ void PenaltyLayer<T>::initialize()
     if (env && std::string(env) == "true")
     {
         mUseNgramPenalty = true;
+        TLLM_LOG_INFO("Using custom ngram penalty");
     }
 
     TLLM_LOG_TRACE("%s stop", __PRETTY_FUNCTION__);
@@ -276,24 +278,6 @@ void PenaltyLayer<T>::forwardAsync(std::shared_ptr<BaseDecodingOutputs> const& b
 
 #undef GET_PENALTIES
 
-    if (mUseNgramPenalty)
-    {
-        TLLM_CHECK_WITH_INFO(localDecoderDomain.getBeamWidth() == 1, "ngram penalty does not support beam size > 1");
-        if (repetitionPenalties)
-        {
-            invokeNgramPenalty(bufferCastOrNull<TokenIdType>(mPenaltyWorkspaceDevice),
-                               inputLengths,
-                               bufferCast<SizeType32>(*outputs->sequenceLength.value()),
-                               bufferCast<TokenIdType const*>(*outputs->outputIdsPtr),
-                               reinterpret_cast<FinishedState const*>(bufferCastOrNull<FinishedState::UnderlyingType>(params->finished.value_or(nullptr))),
-                               batchSlots,
-                               localDecoderDomain.getBatchSize(),
-                               mDecoderDomain.getVocabSize(),
-                               getStream());
-            sync_check_cuda_error();
-        }
-    }
-
     auto* const tokensPerStep = bufferCastOrNull<SizeType32>(params->curTokensPerStep);
 
     InvokeBatchApplyPenaltyParams<T> penaltyParams{};
@@ -329,6 +313,24 @@ void PenaltyLayer<T>::forwardAsync(std::shared_ptr<BaseDecodingOutputs> const& b
         ? reinterpret_cast<FinishedState const*>(bufferCast<FinishedState::UnderlyingType>(*params->finished.value()))
         : nullptr;
     penaltyParams.stream = getStream();
+
+    if (mUseNgramPenalty)
+    {
+        TLLM_CHECK_WITH_INFO(localDecoderDomain.getBeamWidth() == 1, "ngram penalty does not support beam size > 1");
+        if (repetitionPenalties)
+        {
+            invokeNgramPenalty(penaltyParams.penaltyWorkspace,
+                               penaltyParams.inputLengths,
+                               penaltyParams.sequenceLengths,
+                               penaltyParams.outputIdsPtr,
+                               penaltyParams.finished,
+                               penaltyParams.batchSlots,
+                               penaltyParams.batchSize,
+                               penaltyParams.vocabSize,
+                               penaltyParams.stream);
+            sync_check_cuda_error();
+        }
+    }
 
     if (penaltyParams.beamWidth > 1)
     {
