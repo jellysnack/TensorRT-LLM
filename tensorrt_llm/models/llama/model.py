@@ -499,6 +499,7 @@ class LLaMAForCausalLM(DecoderModelForCausalLM):
         calib_max_seq_length: int = 512,
         random_seed: int = 1234,
         tokenizer_max_seq_length: int = 2048,
+        calib_truncate: bool = True,
         **kwargs,
     ):
         if quant_config.requires_modelopt_quantization:
@@ -514,7 +515,8 @@ class LLaMAForCausalLM(DecoderModelForCausalLM):
                              calib_batch_size=calib_batch_size,
                              calib_max_seq_length=calib_max_seq_length,
                              random_seed=random_seed,
-                             tokenizer_max_seq_length=tokenizer_max_seq_length)
+                             tokenizer_max_seq_length=tokenizer_max_seq_length,
+                             calib_truncate=calib_truncate)
         elif quant_config.requires_calibration:
             # non-modelopt quantization flow
             from . import convert
@@ -533,7 +535,8 @@ class LLaMAForCausalLM(DecoderModelForCausalLM):
                              calib_dataset=calib_dataset,
                              trust_remote_code=trust_remote_code,
                              calib_batches=calib_batches,
-                             calib_max_seq_length=calib_max_seq_length)
+                             calib_max_seq_length=calib_max_seq_length,
+                             calib_truncate=calib_truncate)
         else:
             raise ValueError(
                 f"The quant_config ({quant_config}) does not require calibration, try {cls.__name__}.from_hugging_face instead."

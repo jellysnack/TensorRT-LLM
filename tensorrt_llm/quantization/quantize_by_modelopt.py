@@ -265,7 +265,8 @@ def get_calib_dataloader(dataset_name_or_dir="cnn_dailymail",
                          calib_size=512,
                          block_size=512,
                          device=None,
-                         include_labels=False):
+                         include_labels=False,
+                         truncate=True):
     logger.info("Loading calibration dataset")
     if dataset_name_or_dir == "pileval":
         dataset = load_dataset(
@@ -286,6 +287,11 @@ def get_calib_dataloader(dataset_name_or_dir="cnn_dailymail",
             "assuming the calibration data are in the train split and text column."
         )
         dataset = load_dataset(dataset_name_or_dir, split="train")
+        if len(dataset["text"]) > calib_size:
+            print(
+                f"Using subset of the dataset for calibration "
+                f"dataset_size={len(dataset['text'])}, but calib_size={calib_size}"
+            )
         dataset = dataset["text"][:calib_size]
     else:
         raise NotImplementedError(
@@ -295,8 +301,15 @@ def get_calib_dataloader(dataset_name_or_dir="cnn_dailymail",
     batch_encoded = tokenizer.batch_encode_plus(dataset,
                                                 return_tensors="pt",
                                                 padding=True,
-                                                truncation=True,
+                                                truncation=truncate,
                                                 max_length=block_size)
+
+    if not truncate:
+        longest = batch_encoded["input_ids"].shape[1]
+        if longest > block_size:
+            raise ValueError(
+                f"Got truncation=False, but the longest sequence in dataset ({longest}) is larger than block_size={block_size}"
+            )
 
     if device:
         batch_encoded = batch_encoded.to(device)
@@ -517,7 +530,8 @@ def quantize_and_export(*,
                         medusa_hidden_act=None,
                         medusa_model_dir=None,
                         quant_medusa_head=None,
-                        auto_quantize_bits=None):
+                        auto_quantize_bits=None,
+                        calib_truncate=True):
     '''
         Load model from the model_dir, call Modelopt to quantize the model, and then export
         the quantized model as TRT-LLM checkpoint
@@ -565,11 +579,10 @@ def quantize_and_export(*,
     else:
         if "awq" in qformat:
             if calib_size > 32:
-                logger.info(
-                    f"AWQ calibration could take longer with calib_size = {calib_size}, Using"
+                print(
+                    f"AWQ calibration could take longer with calib_size = {calib_size}, Consider using"
                     " calib_size=32 instead")
-                calib_size = 32
-            logger.info(
+            print(
                 "\nAWQ calibration could take longer than other calibration methods. Please"
                 " increase the batch size to speed up the calibration process. Batch size can be"
                 " set by adding the argument --batch_size <batch_size> to the command line.\n"
@@ -615,6 +628,7 @@ def quantize_and_export(*,
             block_size=calib_max_seq_length,
             device=model.device,
             include_labels=auto_quantize_bits is not None,
+            truncate=calib_truncate
         )
 
         model = quantize_model(model, quant_cfg, calib_dataloader, batch_size,
