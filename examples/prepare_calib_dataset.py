@@ -1,4 +1,5 @@
 import os
+import os.path
 import json
 import random
 import argparse
@@ -6,6 +7,8 @@ import argparse
 from enum import StrEnum
 from typing import Optional, Callable, Dict, Any
 
+import yaml
+import jinja2
 import datasets
 import transformers
 import numpy as np
@@ -26,19 +29,20 @@ def default_formatting_func(sample):
     return sample[TEXT_KEY]
 
 
-def create_formatting_func(formatting_func_config: Dict) -> Callable:
+def create_formatting_func(config: Dict) -> Callable:
+    if 'template' in config:
+        env = jinja2.Environment()
+        template = env.from_string(config['template'])
+    elif 'template_path' in config:
+        dirname = os.path.dirname(config['template_path'])
+        template_name = os.path.basename(config['template_path'])
+        env = jinja2.Environment(
+            loader=jinja2.FileSystemLoader(dirname)
+        )
+        template = env.get_template(template_name)
+
     def formatting_func(sample):
-        text_parts = []
-        for part in formatting_func_config['template']:
-            if part['type'] == 'from_sample':
-                if part['key'] not in sample:
-                    raise ValueError(f'Unknown sample key. The actual are: {list(sample.keys())}')
-                text_parts.append(sample[part['key']])
-            elif part['type'] == 'text':
-                text_parts.append(part['text'])
-            else:
-                raise ValueError(f'Unknwon text part type: {part["type"]}')
-        text = ' '.join(text_parts) # TODO space?
+        text = template.render(ctx=sample)
         for old, new in formatting_func_config['replacement_rules'].items():
             text = text.replace(old, new)
         return text
@@ -112,7 +116,7 @@ if __name__ == '__main__':
     parser.add_argument('--max-samples', type=int, default=None)
     parser.add_argument('--max-seq-length', type=int, required=True)
     parser.add_argument('--truncation', action='store_true', default=False)
-    parser.add_argument('--formatting-func', type=str, default=None)
+    parser.add_argument('--format', type=str, default=None)
     parser.add_argument('--sample-selection-strategy', type=SampleSelectionStrategy, required=True)
     parser.add_argument('--tokenizer-name-or-path', type=str, required=True)
     parser.add_argument('--save-dir', type=str, required=True)
@@ -124,9 +128,9 @@ if __name__ == '__main__':
     tokenizer = load_tokenizer(args.tokenizer_name_or_path)
 
     formatting_func = default_formatting_func
-    if args.formatting_func is not None:
-        with open(args.formatting_func) as f:
-            formatting_func_config = json.load(f)
+    if args.format is not None:
+        with open(args.format) as f:
+            formatting_func_config = yaml.safe_load(f)
         formatting_func = create_formatting_func(formatting_func_config)
 
     dataset = format(dataset, TEXT_KEY, formatting_func)
