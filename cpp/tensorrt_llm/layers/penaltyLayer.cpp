@@ -17,6 +17,8 @@
 
 #include "penaltyLayer.h"
 #include "tensorrt_llm/common/cudaUtils.h"
+#include "tensorrt_llm/common/logger.h"
+#include "tensorrt_llm/kernels/ngramPenalty.h"
 #include "tensorrt_llm/common/nvtxUtils.h"
 #include "tensorrt_llm/kernels/penaltyKernels.h"
 #include "tensorrt_llm/kernels/penaltyTypes.h"
@@ -24,6 +26,8 @@
 #include "tensorrt_llm/layers/layerUtils.h"
 #include "tensorrt_llm/runtime/bufferManager.h"
 #include "tensorrt_llm/runtime/common.h"
+#include "tensorrt_llm/runtime/iBuffer.h"
+#include "tensorrt_llm/runtime/iTensor.h"
 
 #include <algorithm>
 
@@ -69,6 +73,13 @@ void PenaltyLayer<T>::initialize()
         mConfiguredBeamWidth = mDecoderDomain.getBeamWidth();
 
         allocateWorkspace();
+    }
+
+    const char* env = std::getenv("TRTLLM_NGRAM_PENALTY");
+    if (env && std::string(env) == "true")
+    {
+        mUseNgramPenalty = true;
+        TLLM_LOG_INFO("Using custom ngram penalty");
     }
 
     TLLM_LOG_TRACE("%s stop", __PRETTY_FUNCTION__);
@@ -305,6 +316,7 @@ void PenaltyLayer<T>::forwardAsync(std::shared_ptr<BaseDecodingOutputs> const& b
     penaltyParams.repetitionPenalties = bufferCastOrNull<float>(repetitionPenalties);
     penaltyParams.presencePenalties = bufferCastOrNull<float>(presencePenalties);
     penaltyParams.frequencyPenalties = bufferCastOrNull<float>(frequencyPenalties);
+    penaltyParams.ngramPenalty = mUseNgramPenalty;
     penaltyParams.batchSize = localDecoderDomain.getBatchSize();
     penaltyParams.beamWidth = localDecoderDomain.getBeamWidth();
     penaltyParams.maxSeqLen = maxSeqLen;
@@ -323,6 +335,28 @@ void PenaltyLayer<T>::forwardAsync(std::shared_ptr<BaseDecodingOutputs> const& b
         ? reinterpret_cast<FinishedState const*>(bufferCast<FinishedState::UnderlyingType>(*params->finished.value()))
         : nullptr;
     penaltyParams.stream = getStream();
+
+    if (mUseNgramPenalty)
+    {
+        TLLM_CHECK_WITH_INFO(localDecoderDomain.getBeamWidth() == 1, "ngram penalty does not support beam size > 1");
+        TLLM_CHECK_WITH_INFO(
+            localDecoderDomain.getMaxDecodingTokens() == 1,
+            "ngram penalty kernel suppose that maxDecodingSteps == 1 (watch penaltyWorkspace indexing in it)"
+        );
+        if (repetitionPenalties)
+        {
+            invokeNgramPenalty(penaltyParams.penaltyWorkspace,
+                               penaltyParams.inputLengths,
+                               penaltyParams.sequenceLengths,
+                               penaltyParams.outputIdsPtr,
+                               penaltyParams.finished,
+                               penaltyParams.batchSlots,
+                               penaltyParams.batchSize,
+                               penaltyParams.vocabSize,
+                               penaltyParams.stream);
+            sync_check_cuda_error(penaltyParams.stream);
+        }
+    }
 
     if (penaltyParams.beamWidth > 1)
     {
