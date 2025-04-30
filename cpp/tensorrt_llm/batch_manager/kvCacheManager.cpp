@@ -1237,7 +1237,9 @@ void WindowBlockManager::storeBlocks(
     auto searchRoot = mCachedBlocksRoot;
     bool needMatch = true;
 
-    auto numBlocks = blockKeys.size();
+    // Ensure we don't try to access more blockIds than are available
+    auto numBlocks = std::min(blockKeys.size(), blockIds.size());
+    // auto numBlocks = blockKeys.size();
     std::vector<BlockPtr> storedBlocks;
     for (std::size_t blockCnt = 0; blockCnt < numBlocks; ++blockCnt)
     {
@@ -2050,7 +2052,7 @@ void KVCacheManager::getBlockOffsetsOfBatch(
 
 std::tuple<SizeType32, SizeType32> BaseKVCacheManager::calculateMaxNumBlocks(KvCacheConfig const& config,
     nvinfer1::DataType dtype, ModelConfig const& modelConfig, WorldConfig const& worldConfig,
-    runtime::BufferManager const& bufferManager, SizeType32 kvFactor)
+    runtime::BufferManager const& bufferManager, SizeType32 kvFactor, size_t extraCostMemory)
 {
     auto const freeMemFraction = config.freeGpuMemoryFraction.value_or(KvCacheConfig::kDefaultGpuMemFraction);
     TLLM_CHECK_WITH_INFO(freeMemFraction < 1.0F,
@@ -2061,10 +2063,14 @@ std::tuple<SizeType32, SizeType32> BaseKVCacheManager::calculateMaxNumBlocks(KvC
     TLLM_CUDA_CHECK(::cudaDeviceSynchronize());
     auto const [freeMem, totalMem] = tc::getDeviceMemoryInfo(config.useUvm);
     auto maxTokens = static_cast<SizeType32>(freeMemFraction
-        * static_cast<double>(freeMem + bufferManager.memoryPoolFree()) / static_cast<double>(cacheSizeBytesPerToken));
-    TLLM_LOG_INFO("Memory usage when calculating max tokens in paged kv cache: total: %0.2f GiB, available: %0.2f GiB",
+        * static_cast<double>(freeMem - extraCostMemory + bufferManager.memoryPoolFree())
+        / static_cast<double>(cacheSizeBytesPerToken));
+    TLLM_LOG_INFO(
+        "Memory usage when calculating max tokens in paged kv cache: total: %0.2f GiB, available: %0.2f GiB, "
+        "extraCostMemory: %0.2f GiB",
         (totalMem / static_cast<double>(1 << 30)),
-        ((freeMem + bufferManager.memoryPoolFree()) / static_cast<double>(1 << 30)));
+        ((freeMem + bufferManager.memoryPoolFree()) / static_cast<double>(1 << 30)),
+        extraCostMemory / static_cast<double>(1 << 30));
 
     // If user specified a number of tokens
     if (config.maxTokens.has_value())
