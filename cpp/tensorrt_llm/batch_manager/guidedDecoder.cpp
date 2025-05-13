@@ -20,6 +20,7 @@
 #include "tensorrt_llm/kernels/logitsBitmask.h"
 
 #include <xgrammar/xgrammar.h>
+#include <picojson.h>
 
 using namespace tensorrt_llm::runtime;
 
@@ -43,16 +44,34 @@ GuidedDecoder::GuidedDecoder(executor::GuidedDecodingConfig const& guidedDecodin
         auto const& tokenizerStr = guidedDecodingConfig.getTokenizerStr();
         if (tokenizerStr)
         {
-            auto const& tokenizerInfo = xgrammar::TokenizerInfo::FromHuggingFace(
-                guidedDecodingConfig.getEncodedVocab().value(), guidedDecodingConfig.getTokenizerStr().value(),
-                mVocabSizePadded, guidedDecodingConfig.getStopTokenIds());
-            mXGrammarCompiler = std::make_shared<xgrammar::GrammarCompiler>(tokenizerInfo);
+            auto const& metadata = xgrammar::TokenizerInfo::DetectMetadataFromHF(guidedDecodingConfig.getTokenizerStr().value());
+            picojson::value v;
+            std::string err = picojson::parse(v, metadata);
+            TLLM_CHECK_WITH_INFO(err.empty(), "Failed to parse metadata: %s", err.c_str());
+
+            const picojson::object& obj = v.get<picojson::object>();
+            TLLM_CHECK_WITH_INFO(obj.count("vocab_type") && obj["vocab_type"].is<std::int64_t>(),
+                "Missing or invalid 'vocab_type' in metadata");
+            int vocab_type_int = static_cast<int>(obj["vocab_type"].get<int64_t>());
+            TLLM_CHECK_WITH_INFO(vocab_type_int == 0 || vocab_type_int == 1 || vocab_type_int == 2,
+                "Invalid vocab_type in metadata: %d", vocab_type_int);
+            xgrammar::VocabType vocab_type = static_cast<xgrammar::VocabType>(vocab_type_int);
+
+            TLLM_CHECK_WITH_INFO(obj.count("add_prefix_space") && obj["add_prefix_space"].is<bool>(),
+                "Missing or invalid 'add_prefix_space' in metadata");
+            bool add_prefix_space = obj["add_prefix_space"].get<bool>();
+
+            auto const& tokenizerInfo = xgrammar::TokenizerInfo(guidedDecodingConfig.getEncodedVocab().value(),
+                vocab_type, mVocabSizePadded, guidedDecodingConfig.getStopTokenIds(), add_prefix_space);
+            mXGrammarCompiler = std::make_shared<xgrammar::GrammarCompiler>(
+                tokenizerInfo, /*max_threads*/ 8, /*cache_enabled*/ false);
         }
         else
         {
             auto const& tokenizerInfo = xgrammar::TokenizerInfo(guidedDecodingConfig.getEncodedVocab().value(),
                 xgrammar::VocabType::RAW, mVocabSizePadded, guidedDecodingConfig.getStopTokenIds());
-            mXGrammarCompiler = std::make_shared<xgrammar::GrammarCompiler>(tokenizerInfo);
+            mXGrammarCompiler = std::make_shared<xgrammar::GrammarCompiler>(
+                tokenizerInfo, /*max_threads*/ 8, /*cache_enabled*/ false);
         }
 
         auto const logitsPtrDtype = BufferDataType{mLogitsDtype, false, true};
@@ -96,7 +115,7 @@ void GuidedDecoder::build(ScheduledRequests const& scheduledRequests)
                     else if (guideType == executor::GuidedDecodingParams::GuideType::kJSON_SCHEMA)
                     {
                         mXGrammarMatchers.at(seqSlot) = std::make_shared<xgrammar::GrammarMatcher>(
-                            mXGrammarCompiler->CompileJSONSchema(guide.value()));
+                            mXGrammarCompiler->CompileJSONSchema(guide.value(), /*any_whitespace*/ false));
                     }
                     else if (guideType == executor::GuidedDecodingParams::GuideType::kREGEX)
                     {
