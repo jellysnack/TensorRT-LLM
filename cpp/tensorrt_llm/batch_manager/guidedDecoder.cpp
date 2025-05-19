@@ -24,6 +24,26 @@
 
 using namespace tensorrt_llm::runtime;
 
+namespace {
+
+// Helper function to safely parse integers
+template<typename T>
+T parseEnvVar(const char* envVal, T defaultValue) {
+    if (!envVal) {
+        return defaultValue;
+    }
+
+    std::istringstream stream(envVal);
+    T parsedValue;
+    stream >> parsedValue;
+
+    TLLM_CHECK_WITH_INFO(!stream.fail() && stream.eof(), "Failed to parse environment variable value '%s'", envVal);
+
+    return parsedValue;
+}
+
+} // namespace
+
 namespace tensorrt_llm::batch_manager
 {
 
@@ -40,6 +60,14 @@ GuidedDecoder::GuidedDecoder(executor::GuidedDecodingConfig const& guidedDecodin
         "LLGuidance is not supported for guided decoding in C++ runtime.");
     if (mGuidedDecodingBackend == executor::GuidedDecodingConfig::GuidedDecodingBackend::kXGRAMMAR)
     {
+        const int max_threads = parseEnvVar(std::getenv("MAX_THREADS"), 8);
+        const bool cache_enabled = parseEnvVar(std::getenv("CACHE_ENABLED"), false);
+        const long long max_mmemory_bytes = parseEnvVar(std::getenv("MAX_MEMORY_BYTES"), -1);
+
+        TLLM_LOG_INFO("[GrammarCompiler] max_threads: %d", max_threads);
+        TLLM_LOG_INFO("[GrammarCompiler] cache_enabled: %s", cache_enabled ? "true" : "false");
+        TLLM_LOG_INFO("[GrammarCompiler] max_mmemory_bytes: %lld", max_mmemory_bytes);
+
         mXGrammarMatchers.resize(mMaxNumSequences);
         auto const& tokenizerStr = guidedDecodingConfig.getTokenizerStr();
         if (tokenizerStr)
@@ -64,14 +92,14 @@ GuidedDecoder::GuidedDecoder(executor::GuidedDecodingConfig const& guidedDecodin
             auto const& tokenizerInfo = xgrammar::TokenizerInfo(guidedDecodingConfig.getEncodedVocab().value(),
                 vocab_type, mVocabSizePadded, guidedDecodingConfig.getStopTokenIds(), add_prefix_space);
             mXGrammarCompiler = std::make_shared<xgrammar::GrammarCompiler>(
-                tokenizerInfo, /*max_threads*/ 8, /*cache_enabled*/ false);
+                tokenizerInfo, max_threads, cache_enabled, max_mmemory_bytes);
         }
         else
         {
             auto const& tokenizerInfo = xgrammar::TokenizerInfo(guidedDecodingConfig.getEncodedVocab().value(),
                 xgrammar::VocabType::RAW, mVocabSizePadded, guidedDecodingConfig.getStopTokenIds());
             mXGrammarCompiler = std::make_shared<xgrammar::GrammarCompiler>(
-                tokenizerInfo, /*max_threads*/ 8, /*cache_enabled*/ false);
+                tokenizerInfo, max_threads, cache_enabled, max_mmemory_bytes);
         }
 
         auto const logitsPtrDtype = BufferDataType{mLogitsDtype, false, true};
