@@ -60,9 +60,9 @@ GuidedDecoder::GuidedDecoder(executor::GuidedDecodingConfig const& guidedDecodin
         "LLGuidance is not supported for guided decoding in C++ runtime.");
     if (mGuidedDecodingBackend == executor::GuidedDecodingConfig::GuidedDecodingBackend::kXGRAMMAR)
     {
-        const int max_threads = parseEnvVar(std::getenv("MAX_THREADS"), 8);
-        const bool cache_enabled = parseEnvVar(std::getenv("CACHE_ENABLED"), false);
-        const long long max_mmemory_bytes = parseEnvVar(std::getenv("MAX_MEMORY_BYTES"), -1);
+        const int max_threads = parseEnvVar(std::getenv("XGR_MAX_THREADS"), 8);
+        const bool cache_enabled = parseEnvVar(std::getenv("XGR_CACHE_ENABLED"), false);
+        const long long max_mmemory_bytes = parseEnvVar(std::getenv("XGR_MAX_MEMORY_BYTES"), -1);
 
         TLLM_LOG_INFO("[GrammarCompiler] max_threads: %d", max_threads);
         TLLM_LOG_INFO("[GrammarCompiler] cache_enabled: %s", cache_enabled ? "true" : "false");
