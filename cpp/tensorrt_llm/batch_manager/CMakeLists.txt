@@ -55,7 +55,10 @@ set(SRCS
     utils/inflightBatchingUtils.cpp
     utils/logitsThread.cpp
     utils/staticThreadPool.cpp
-    evictionPolicy.cpp)
+    evictionPolicy.cpp
+    xgrammarFactory.cpp
+    llguidanceFactory.cpp
+    llguidanceUtil.cpp)
 
 file(GLOB_RECURSE XGRAMMAR_SRCS "${3RDPARTY_DIR}/xgrammar/cpp/*.cc")
 list(FILTER XGRAMMAR_SRCS EXCLUDE REGEX
@@ -82,7 +85,8 @@ target_include_directories(
   ${BATCH_MANAGER_STATIC_TARGET}
   PUBLIC ${3RDPARTY_DIR}/xgrammar/3rdparty/picojson
          ${3RDPARTY_DIR}/xgrammar/3rdparty/dlpack/include
-         ${3RDPARTY_DIR}/xgrammar/include)
+         ${3RDPARTY_DIR}/xgrammar/include
+         ${3RDPARTY_DIR}/llguidance/parser)
 
 set_target_properties(
   ${BATCH_MANAGER_STATIC_TARGET}
@@ -95,11 +99,16 @@ set(TOP_LEVEL_DIR "${PROJECT_SOURCE_DIR}/..")
 target_compile_definitions(${BATCH_MANAGER_STATIC_TARGET}
                            PUBLIC TOP_LEVEL_DIR="${TOP_LEVEL_DIR}")
 
+find_library(
+  llguidance libllguidance.a REQUIRED
+  PATHS ${3RDPARTY_DIR}/llguidance/target/release
+)
+
 if(ENABLE_UCX)
   find_package(ucx REQUIRED)
   find_package(ucxx REQUIRED)
   target_include_directories(
     ${BATCH_MANAGER_STATIC_TARGET}
     PRIVATE $<TARGET_PROPERTY:ucxx::ucxx,INTERFACE_INCLUDE_DIRECTORIES>)
-  target_link_libraries(${BATCH_MANAGER_STATIC_TARGET} PUBLIC)
+  target_link_libraries(${BATCH_MANAGER_STATIC_TARGET} PUBLIC ${llguidance})
 endif()
