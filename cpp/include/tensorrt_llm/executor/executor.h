@@ -1314,6 +1314,7 @@ public:
     {
         /// @brief Enable guided decoding with XGrammar backend.
         kXGRAMMAR = 0,
+        kLLGUIDANCE = 1,
     };
 
     explicit GuidedDecodingConfig(GuidedDecodingBackend backend,
