@@ -17,32 +17,11 @@
 
 #include "tensorrt_llm/batch_manager/guidedDecoder.h"
 #include "tensorrt_llm/batch_manager/llmRequest.h"
+#include "tensorrt_llm/batch_manager/llguidanceFactory.h"
+#include "tensorrt_llm/batch_manager/xgrammarFactory.h"
 #include "tensorrt_llm/kernels/logitsBitmask.h"
 
-#include <xgrammar/xgrammar.h>
-#include <picojson.h>
-
 using namespace tensorrt_llm::runtime;
-
-namespace {
-
-// Helper function to safely parse integers
-template<typename T>
-T parseEnvVar(const char* envVal, T defaultValue) {
-    if (!envVal) {
-        return defaultValue;
-    }
-
-    std::istringstream stream(envVal);
-    T parsedValue;
-    stream >> parsedValue;
-
-    TLLM_CHECK_WITH_INFO(!stream.fail() && stream.eof(), "Failed to parse environment variable value '%s'", envVal);
-
-    return parsedValue;
-}
-
-} // namespace
 
 namespace tensorrt_llm::batch_manager
 {
@@ -56,68 +35,38 @@ GuidedDecoder::GuidedDecoder(executor::GuidedDecodingConfig const& guidedDecodin
     , mLogitsDtype{logitsDtype}
     , mCopyBufferManager{std::make_shared<CudaStream>()}
 {
-    TLLM_CHECK_WITH_INFO(mGuidedDecodingBackend != executor::GuidedDecodingConfig::GuidedDecodingBackend::kLLGUIDANCE,
-        "LLGuidance is not supported for guided decoding in C++ runtime.");
-    if (mGuidedDecodingBackend == executor::GuidedDecodingConfig::GuidedDecodingBackend::kXGRAMMAR)
+    switch (mGuidedDecodingBackend)
     {
-        const int max_threads = parseEnvVar(std::getenv("XGR_MAX_THREADS"), 8);
-        const bool cache_enabled = parseEnvVar(std::getenv("XGR_CACHE_ENABLED"), false);
-        const long long max_mmemory_bytes = parseEnvVar(std::getenv("XGR_MAX_MEMORY_BYTES"), -1);
-
-        TLLM_LOG_INFO("[GrammarCompiler] max_threads: %d", max_threads);
-        TLLM_LOG_INFO("[GrammarCompiler] cache_enabled: %s", cache_enabled ? "true" : "false");
-        TLLM_LOG_INFO("[GrammarCompiler] max_mmemory_bytes: %lld", max_mmemory_bytes);
-
-        mXGrammarMatchers.resize(mMaxNumSequences);
-        auto const& tokenizerStr = guidedDecodingConfig.getTokenizerStr();
-        if (tokenizerStr)
+        case executor::GuidedDecodingConfig::GuidedDecodingBackend::kXGRAMMAR:
         {
-            auto const& metadata = xgrammar::TokenizerInfo::DetectMetadataFromHF(guidedDecodingConfig.getTokenizerStr().value());
-            picojson::value v;
-            std::string err = picojson::parse(v, metadata);
-            TLLM_CHECK_WITH_INFO(err.empty(), "Failed to parse metadata: %s", err.c_str());
-
-            const picojson::object& obj = v.get<picojson::object>();
-            TLLM_CHECK_WITH_INFO(obj.count("vocab_type") && obj["vocab_type"].is<std::int64_t>(),
-                "Missing or invalid 'vocab_type' in metadata");
-            int vocab_type_int = static_cast<int>(obj["vocab_type"].get<int64_t>());
-            TLLM_CHECK_WITH_INFO(vocab_type_int == 0 || vocab_type_int == 1 || vocab_type_int == 2,
-                "Invalid vocab_type in metadata: %d", vocab_type_int);
-            xgrammar::VocabType vocab_type = static_cast<xgrammar::VocabType>(vocab_type_int);
-
-            TLLM_CHECK_WITH_INFO(obj.count("add_prefix_space") && obj["add_prefix_space"].is<bool>(),
-                "Missing or invalid 'add_prefix_space' in metadata");
-            bool add_prefix_space = obj["add_prefix_space"].get<bool>();
-
-            auto const& tokenizerInfo = xgrammar::TokenizerInfo(guidedDecodingConfig.getEncodedVocab().value(),
-                vocab_type, mVocabSizePadded, guidedDecodingConfig.getStopTokenIds(), add_prefix_space);
-            mXGrammarCompiler = std::make_shared<xgrammar::GrammarCompiler>(
-                tokenizerInfo, max_threads, cache_enabled, max_mmemory_bytes);
+            mGrammarMatcherFactory = std::make_shared<XGrammarMatcherFactory>(guidedDecodingConfig, mVocabSizePadded);
+            break;
         }
-        else
+        case executor::GuidedDecodingConfig::GuidedDecodingBackend::kLLGUIDANCE:
         {
-            auto const& tokenizerInfo = xgrammar::TokenizerInfo(guidedDecodingConfig.getEncodedVocab().value(),
-                xgrammar::VocabType::RAW, mVocabSizePadded, guidedDecodingConfig.getStopTokenIds());
-            mXGrammarCompiler = std::make_shared<xgrammar::GrammarCompiler>(
-                tokenizerInfo, max_threads, cache_enabled, max_mmemory_bytes);
+            mGrammarMatcherFactory = std::make_shared<LLGuidanceMatcherFactory>(guidedDecodingConfig, mVocabSizePadded);
+            break;
         }
 
-        auto const logitsPtrDtype = BufferDataType{mLogitsDtype, false, true};
-        auto constexpr bitmaskDtype = TRTDataType<BitmaskT>::value;
-        auto constexpr bitmaskPtrDtype = TRTDataType<BitmaskT*>::value;
-
-        mLogitsBitmask = runtimeBufferManager.gpu(ITensor::makeShape({mMaxNumSequences, mBitmaskSize}), bitmaskDtype);
-        mLogitsBitmaskHost = BufferManager::pinned(ITensor::makeShape({mMaxNumSequences, mBitmaskSize}), bitmaskDtype);
-        mLogitsBitmaskPtrVec = runtimeBufferManager.gpu(ITensor::makeShape({mMaxNumSequences}), bitmaskPtrDtype);
-        mLogitsBitmaskPtrVecHost = BufferManager::pinned(ITensor::makeShape({mMaxNumSequences}), bitmaskPtrDtype);
-        mLogitsPtrVec = runtimeBufferManager.gpu(ITensor::makeShape({mMaxNumSequences}), logitsPtrDtype);
-        mLogitsPtrVecHost = BufferManager::pinned(ITensor::makeShape({mMaxNumSequences}), logitsPtrDtype);
     }
+
+    mGrammarMatchers.resize(mMaxNumSequences);
+
+    auto const logitsPtrDtype = BufferDataType{mLogitsDtype, false, true};
+    auto constexpr bitmaskDtype = TRTDataType<BitmaskT>::value;
+    auto constexpr bitmaskPtrDtype = TRTDataType<BitmaskT*>::value;
+
+    mLogitsBitmask = runtimeBufferManager.gpu(ITensor::makeShape({mMaxNumSequences, mBitmaskSize}), bitmaskDtype);
+    mLogitsBitmaskHost = BufferManager::pinned(ITensor::makeShape({mMaxNumSequences, mBitmaskSize}), bitmaskDtype);
+    mLogitsBitmaskPtrVec = runtimeBufferManager.gpu(ITensor::makeShape({mMaxNumSequences}), bitmaskPtrDtype);
+    mLogitsBitmaskPtrVecHost = BufferManager::pinned(ITensor::makeShape({mMaxNumSequences}), bitmaskPtrDtype);
+    mLogitsPtrVec = runtimeBufferManager.gpu(ITensor::makeShape({mMaxNumSequences}), logitsPtrDtype);
+    mLogitsPtrVecHost = BufferManager::pinned(ITensor::makeShape({mMaxNumSequences}), logitsPtrDtype);
 }
 
 void GuidedDecoder::build(ScheduledRequests const& scheduledRequests)
 {
-    if (mGuidedDecodingBackend == executor::GuidedDecodingConfig::GuidedDecodingBackend::kXGRAMMAR)
+    try
     {
         for (auto const& requests : {scheduledRequests.contextRequests, scheduledRequests.generationRequests})
         {
@@ -135,34 +84,13 @@ void GuidedDecoder::build(ScheduledRequests const& scheduledRequests)
                     // The request is in the first context forward step (considering kv cache reuse).
                     auto const& guideType = guidedDecodingParams->getGuideType();
                     auto const& guide = guidedDecodingParams->getGuide();
-                    if (guideType == executor::GuidedDecodingParams::GuideType::kJSON)
-                    {
-                        mXGrammarMatchers.at(seqSlot) = std::make_shared<xgrammar::GrammarMatcher>(
-                            mXGrammarCompiler->CompileBuiltinJSONGrammar());
-                    }
-                    else if (guideType == executor::GuidedDecodingParams::GuideType::kJSON_SCHEMA)
-                    {
-                        mXGrammarMatchers.at(seqSlot) = std::make_shared<xgrammar::GrammarMatcher>(
-                            mXGrammarCompiler->CompileJSONSchema(guide.value(), /*any_whitespace*/ false));
-                    }
-                    else if (guideType == executor::GuidedDecodingParams::GuideType::kREGEX)
-                    {
-                        auto const& grammar = xgrammar::Grammar::FromRegex(guide.value());
-                        mXGrammarMatchers.at(seqSlot)
-                            = std::make_shared<xgrammar::GrammarMatcher>(mXGrammarCompiler->CompileGrammar(grammar));
-                    }
-                    else if (guideType == executor::GuidedDecodingParams::GuideType::kEBNF_GRAMMAR)
-                    {
-                        auto const& grammar = xgrammar::Grammar::FromEBNF(guide.value());
-                        mXGrammarMatchers.at(seqSlot)
-                            = std::make_shared<xgrammar::GrammarMatcher>(mXGrammarCompiler->CompileGrammar(grammar));
-                    }
+                    mGrammarMatchers.at(seqSlot) = mGrammarMatcherFactory->Create(guideType, guide);
                 }
                 else if (llmReq->isGenerationInProgressState())
                 {
                     // The request is in a generation forward step.
                     // Currently, guided decoding does not support with beam search.
-                    mXGrammarMatchers.at(seqSlot)->AcceptToken(llmReq->getLastTokens(0));
+                    mGrammarMatchers.at(seqSlot)->AcceptToken(llmReq->getLastTokens(0));
                 }
                 else
                 {
@@ -176,30 +104,34 @@ void GuidedDecoder::build(ScheduledRequests const& scheduledRequests)
                 std::array<int64_t, 1> bitmaskShape{mBitmaskSize};
                 DLTensor logitsBitmaskDlt{logitsBitmaskHost->data(), DLDevice{kDLCPU, 0}, 1, DLDataType{kDLInt, 32, 1},
                     bitmaskShape.data(), nullptr, 0};
-                mXGrammarMatchers.at(seqSlot)->FillNextTokenBitmask(&logitsBitmaskDlt);
+                mGrammarMatchers.at(seqSlot)->FillNextTokenBitmask(&logitsBitmaskDlt);
                 mCopyBufferManager.copy(*logitsBitmaskHost, *logitsBitmask);
             }
         }
+    } catch (const std::exception& e)
+    {
+        // a workaround to detect XGrammar/LLG errors and map them to IAE
+        throw NEW_TLLM_EXCEPTION("[GUIDED_DECODER_EXCEPTION]: %s", e.what());
     }
 }
 
 void GuidedDecoder::execute(ScheduledRequests const& scheduledRequests, BufferManager const& runtimeBufferManager,
     std::vector<TensorPtr> const& decoderBuffersLogits)
 {
-    auto const& stream = runtimeBufferManager.getStream();
-
-    // Wait for mCopyBufferManager finishing the H2D copy of logitsBitmask
-    // TODO(enweiz): Move the H2D copy of logitsBitmaskPtrVec to buildGuidedDecoding.
-    // This may not bring too much perf gain because of the small size of logitsBitmaskPtrVec.
-    // TODO(enweiz): For chunked context, we currently build mask cache at the first context chunk, and apply
-    // the mask at the last context chunk. So, ideally we should sync the stream at the last context chunk.
-    CudaEvent event{};
-    mCopyBufferManager.getStream().record(event);
-    stream.wait(event);
-
-    SizeType32 batchIdx{0};
-    if (mGuidedDecodingBackend == executor::GuidedDecodingConfig::GuidedDecodingBackend::kXGRAMMAR)
+    try
     {
+        auto const& stream = runtimeBufferManager.getStream();
+
+        // Wait for mCopyBufferManager finishing the H2D copy of logitsBitmask
+        // TODO(enweiz): Move the H2D copy of logitsBitmaskPtrVec to buildGuidedDecoding.
+        // This may not bring too much perf gain because of the small size of logitsBitmaskPtrVec.
+        // TODO(enweiz): For chunked context, we currently build mask cache at the first context chunk, and apply
+        // the mask at the last context chunk. So, ideally we should sync the stream at the last context chunk.
+        CudaEvent event{};
+        mCopyBufferManager.getStream().record(event);
+        stream.wait(event);
+
+        SizeType32 batchIdx{0};
         for (auto const& requests : {scheduledRequests.contextRequests, scheduledRequests.generationRequests})
         {
             for (auto const& llmReq : requests)
@@ -250,6 +182,10 @@ void GuidedDecoder::execute(ScheduledRequests const& scheduledRequests, BufferMa
                 TLLM_THROW("Unsupported logits data type.");
             }
         }
+    } catch (const std::exception& e)
+    {
+        // a workaround to detect XGrammar/LLG errors and map them to IAE
+        throw NEW_TLLM_EXCEPTION("[GUIDED_DECODER_EXCEPTION]: %s", e.what());
     }
 }
 
