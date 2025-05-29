@@ -375,6 +375,20 @@ include_directories(
   ${3RDPARTY_DIR}/json/include
   ${3RDPARTY_DIR}/pybind11/include)
 
+# LLGuidance dependency
+set(LLG_DIR "${3RDPARTY_DIR}/llguidance")
+set(LLG_LIB_PATH "${3RDPARTY_DIR}/llguidance/target/release/lguidance.a")
+add_custom_command(
+    OUTPUT "${LLG_LIB_PATH}"
+    WORKING_DIRECTORY "${LLG_DIR}/parser"
+    COMMAND cargo build --release
+    COMMENT "Building LLGuidance static library"
+)
+add_custom_target(
+    build_llglib ALL
+    DEPENDS "${LLG_LIB_PATH}"
+)
+
 # TRT dependencies
 set_ifndef(TRT_LIB_DIR ${CMAKE_BINARY_DIR})
 set_ifndef(TRT_INCLUDE_DIR /usr/include/${CMAKE_SYSTEM_PROCESSOR}-linux-gnu)
