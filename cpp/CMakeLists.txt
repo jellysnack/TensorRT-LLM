@@ -377,7 +377,7 @@ include_directories(
 
 # LLGuidance dependency
 set(LLG_DIR "${3RDPARTY_DIR}/llguidance")
-set(LLG_LIB_PATH "${3RDPARTY_DIR}/llguidance/target/release/lguidance.a")
+set(LLG_LIB_PATH "${3RDPARTY_DIR}/llguidance/target/release/libllguidance.a")
 add_custom_command(
     OUTPUT "${LLG_LIB_PATH}"
     WORKING_DIRECTORY "${LLG_DIR}/parser"
