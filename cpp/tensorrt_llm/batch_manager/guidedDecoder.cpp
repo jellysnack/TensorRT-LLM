@@ -16,8 +16,8 @@
  */
 
 #include "tensorrt_llm/batch_manager/guidedDecoder.h"
-#include "tensorrt_llm/batch_manager/llmRequest.h"
 #include "tensorrt_llm/batch_manager/llguidanceFactory.h"
+#include "tensorrt_llm/batch_manager/llmRequest.h"
 #include "tensorrt_llm/batch_manager/xgrammarFactory.h"
 #include "tensorrt_llm/kernels/logitsBitmask.h"
 
@@ -37,17 +37,16 @@ GuidedDecoder::GuidedDecoder(executor::GuidedDecodingConfig const& guidedDecodin
 {
     switch (mGuidedDecodingBackend)
     {
-        case executor::GuidedDecodingConfig::GuidedDecodingBackend::kXGRAMMAR:
-        {
-            mGrammarMatcherFactory = std::make_shared<XGrammarMatcherFactory>(guidedDecodingConfig, mVocabSizePadded);
-            break;
-        }
-        case executor::GuidedDecodingConfig::GuidedDecodingBackend::kLLGUIDANCE:
-        {
-            mGrammarMatcherFactory = std::make_shared<LLGuidanceMatcherFactory>(guidedDecodingConfig, mVocabSizePadded);
-            break;
-        }
-
+    case executor::GuidedDecodingConfig::GuidedDecodingBackend::kXGRAMMAR:
+    {
+        mGrammarMatcherFactory = std::make_shared<XGrammarMatcherFactory>(guidedDecodingConfig, mVocabSizePadded);
+        break;
+    }
+    case executor::GuidedDecodingConfig::GuidedDecodingBackend::kLLGUIDANCE:
+    {
+        mGrammarMatcherFactory = std::make_shared<LLGuidanceMatcherFactory>(guidedDecodingConfig, mVocabSizePadded);
+        break;
+    }
     }
 
     mGrammarMatchers.resize(mMaxNumSequences);
@@ -108,7 +107,8 @@ void GuidedDecoder::build(ScheduledRequests const& scheduledRequests)
                 mCopyBufferManager.copy(*logitsBitmaskHost, *logitsBitmask);
             }
         }
-    } catch (const std::exception& e)
+    }
+    catch (std::exception const& e)
     {
         // a workaround to detect XGrammar/LLG errors and map them to IAE
         throw NEW_TLLM_EXCEPTION("[GUIDED_DECODER_EXCEPTION]: %s", e.what());
@@ -182,7 +182,8 @@ void GuidedDecoder::execute(ScheduledRequests const& scheduledRequests, BufferMa
                 TLLM_THROW("Unsupported logits data type.");
             }
         }
-    } catch (const std::exception& e)
+    }
+    catch (std::exception const& e)
     {
         // a workaround to detect XGrammar/LLG errors and map them to IAE
         throw NEW_TLLM_EXCEPTION("[GUIDED_DECODER_EXCEPTION]: %s", e.what());

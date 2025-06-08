@@ -120,6 +120,10 @@ namespace tensorrt_llm::batch_manager
                 grammarMatcher = std::make_shared<xgrammar::GrammarMatcher>(mXGrammarCompiler->CompileGrammar(grammar));
                 break;
             }
+            case tle::GuidedDecodingParams::GuideType::kLARK_GRAMMAR:
+            {
+                TLLM_CHECK_WITH_INFO(false, "kLARK_GRAMMAR is not supported by the xgrammar backend");
+            }
         }
 
         return std::make_shared<XGrammarMatcher>(grammarMatcher);
