@@ -124,6 +124,10 @@ namespace tensorrt_llm::batch_manager
             {
                 TLLM_CHECK_WITH_INFO(false, "kLARK_GRAMMAR is not supported by the xgrammar backend");
             }
+            case tle::GuidedDecodingParams::GuideType::kSTRUCTURAL_TAG:
+            {
+                TLLM_CHECK_WITH_INFO(false, "kSTRUCTURAL_TAG is not supported for guided decoding in C++ Executor.");
+            }
         }
 
         return std::make_shared<XGrammarMatcher>(grammarMatcher);
