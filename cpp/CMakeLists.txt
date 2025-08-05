@@ -223,6 +223,21 @@ if(BINDING_TYPE STREQUAL "pybind" OR BUILD_DEEP_EP)
 endif()
 if(BINDING_TYPE STREQUAL "nanobind")
   include_directories(${3RDPARTY_DIR}/nanobind/include)
+
+# LLGuidance dependency
+set(LLG_DIR "${3RDPARTY_DIR}/llguidance")
+set(LLG_LIB_PATH "${3RDPARTY_DIR}/llguidance/target/release/libllguidance.a")
+add_custom_command(
+    OUTPUT "${LLG_LIB_PATH}"
+    WORKING_DIRECTORY "${LLG_DIR}/parser"
+    COMMAND cargo build --release
+    COMMENT "Building LLGuidance static library"
+)
+add_custom_target(
+    build_llglib ALL
+    DEPENDS "${LLG_LIB_PATH}"
+)
+
 endif()
 
 if(${CUDAToolkit_VERSION} VERSION_GREATER_EQUAL "11")

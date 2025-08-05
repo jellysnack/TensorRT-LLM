@@ -5,7 +5,7 @@
 namespace tle = tensorrt_llm::executor;
 
 LlgTokenizerPtr llgCreateTokenizer(tle::GuidedDecodingConfig const& guidedDecodingConfig,
-                                    tensorrt_llm::runtime::SizeType32 vocabSize)
+                                   tensorrt_llm::runtime::SizeType32 vocabSize)
 {
     auto const& tokenizerStr = guidedDecodingConfig.getTokenizerStr();
     TLLM_CHECK_WITH_INFO(tokenizerStr, "missing tokenizerStr");
@@ -37,18 +37,23 @@ bool llgValidateGrammar(const tle::GuidedDecodingParams& guidedDecodingParams,
     int32_t result = 0;
     char error_buf[1024];
 
+    auto guide = guidedDecodingParams.getGuide();
     switch (guidedDecodingParams.getGuideType()) {
         case tle::GuidedDecodingParams::GuideType::kJSON_SCHEMA: {
-            auto guide = guidedDecodingParams.getGuide();
             auto schema = llgAddSchemaGuidance(guide.value());
             result = llg_validate_grammar(&init, "json_schema", schema.c_str(), error_buf, sizeof(error_buf));
             break;
         }
-        case tle::GuidedDecodingParams::GuideType::kJSON: {
+        case tle::GuidedDecodingParams::GuideType::kREGEX: {
+            result = llg_validate_grammar(&init, "regex", guide.value().c_str(), error_buf, sizeof(error_buf));
             break;
         }
-        case tle::GuidedDecodingParams::GuideType::kREGEX: {
-            TLLM_CHECK_WITH_INFO(false, "kREGEX is not supported by the llguidance backend");
+        case tle::GuidedDecodingParams::GuideType::kLARK_GRAMMAR: {
+            result = llg_validate_grammar(&init, "lark", guide.value().c_str(), error_buf, sizeof(error_buf));
+            break;
+        }
+        case tle::GuidedDecodingParams::GuideType::kJSON: {
+            break;
         }
         case tle::GuidedDecodingParams::GuideType::kEBNF_GRAMMAR: {
             TLLM_CHECK_WITH_INFO(false, "kEBNF_GRAMMAR is not supported by the llguidance backend");

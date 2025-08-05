@@ -81,7 +81,19 @@ namespace tensorrt_llm::batch_manager
             }
             case tle::GuidedDecodingParams::GuideType::kREGEX:
             {
-                TLLM_CHECK_WITH_INFO(false, "kREGEX is not supported by the llguidance backend");
+                matcher = std::shared_ptr<LlgMatcher>(
+                    llg_new_matcher(&init, "regex", guide.value().c_str()),
+                    llg_free_matcher
+                );
+                break;
+            }
+            case tle::GuidedDecodingParams::GuideType::kLARK_GRAMMAR:
+            {
+                matcher = std::shared_ptr<LlgMatcher>(
+                    llg_new_matcher(&init, "lark", guide.value().c_str()),
+                    llg_free_matcher
+                );
+                break;
             }
             case tle::GuidedDecodingParams::GuideType::kEBNF_GRAMMAR:
             {

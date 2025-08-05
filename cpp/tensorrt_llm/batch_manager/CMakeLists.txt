@@ -103,10 +103,7 @@ if(ENABLE_CUFILE)
   target_link_libraries(${BATCH_MANAGER_STATIC_TARGET} PUBLIC ${CUFILE_LIBRARY})
 endif()
 
-find_library(
-  llguidance libllguidance.a REQUIRED
-  PATHS ${3RDPARTY_DIR}/llguidance/target/release
-)
+add_dependencies(${BATCH_MANAGER_STATIC_TARGET} build_llglib)
 
 if(ENABLE_UCX)
   find_package(ucx REQUIRED)
@@ -114,5 +111,5 @@ if(ENABLE_UCX)
   target_include_directories(
     ${BATCH_MANAGER_STATIC_TARGET}
     PRIVATE $<TARGET_PROPERTY:ucxx::ucxx,INTERFACE_INCLUDE_DIRECTORIES>)
-  target_link_libraries(${BATCH_MANAGER_STATIC_TARGET} PUBLIC ${llguidance})
+  target_link_libraries(${BATCH_MANAGER_STATIC_TARGET} PUBLIC ${LLG_LIB_PATH})
 endif()
