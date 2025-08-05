@@ -507,6 +507,8 @@ public:
 
         /// @brief The generated text is amenable to the XGrammar structural tag.
         kSTRUCTURAL_TAG = 4,
+
+        kLARK_GRAMMAR = 5,
     };
 
     explicit GuidedDecodingParams(GuideType guideType, std::optional<std::string> guide = std::nullopt);
