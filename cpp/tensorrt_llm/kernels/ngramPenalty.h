@@ -11,15 +11,10 @@ namespace tensorrt_llm
 namespace kernels
 {
 
-void invokeNgramPenalty(int32_t* workspace,
-                        runtime::SizeType32 const* inputLengths,
-                        runtime::SizeType32 const* sequenceLengths,
-                        runtime::TokenIdType const** outputIdsPtr,
-                        FinishedState const* finished,
-                        runtime::SizeType32 const* batchSlot,
-                        runtime::SizeType32 batchSize,
-                        runtime::SizeType32 vocabSize,
-                        cudaStream_t stream);
+void invokeNgramPenalty(int32_t* workspace, runtime::SizeType32 const* inputLengths,
+    runtime::SizeType32 const* sequenceLengths, runtime::TokenIdType const** outputIdsPtr,
+    FinishedState const* finished, runtime::SizeType32 const* batchSlot, runtime::SizeType32 batchSize,
+    runtime::SizeType32 vocabSize, cudaStream_t stream);
 
 } // namespace kernels
 } // namespace tensorrt_llm

@@ -39,10 +39,10 @@ template <typename T>
 __global__ void batchApplyPenalty(T const* const* inputLogits, T* outputLogits, T const* biases,
     TokenIdType* penaltyWorkspace, TokenIdType const* penaltyWorkspacePrev, float const* temperatures,
     float const* repetitionPenalties, float const* presencePenalties, float const* frequencyPenalties,
-    bool ngramPenalty, SizeType32 maxSeqLen, SizeType32 vocabSize, SizeType32 vocabSizePadded, TokenIdType const** outputIdsPtr,
-    SizeType32 const** parentIdsPtr, SizeType32 const* inputLengths, SizeType32 const* sequenceLengths,
-    SizeType32 const* minLengths, TokenIdType const* endIds, SizeType32 const* batchSlots,
-    SizeType32 const* tokensPerStep, FinishedState const* finished)
+    bool ngramPenalty, SizeType32 maxSeqLen, SizeType32 vocabSize, SizeType32 vocabSizePadded,
+    TokenIdType const** outputIdsPtr, SizeType32 const** parentIdsPtr, SizeType32 const* inputLengths,
+    SizeType32 const* sequenceLengths, SizeType32 const* minLengths, TokenIdType const* endIds,
+    SizeType32 const* batchSlots, SizeType32 const* tokensPerStep, FinishedState const* finished)
 {
     auto const beamWidth = static_cast<SizeType32>(gridDim.y);
     auto const maxTokensPerStep = static_cast<SizeType32>(gridDim.z);
@@ -179,12 +179,12 @@ __global__ void batchApplyPenalty(T const* const* inputLogits, T* outputLogits, 
             {
                 if (repetitionPenalties != nullptr)
                 {
-                    #pragma unroll
+#pragma unroll
                     for (SizeType32 i = 0; i < numNgrams; ++i)
                     {
                         SizeType32 workspaceIdx = batchBeamStepIdx * vocabSize + index;
                         int32_t bitPos = ngramSizes[i] - 1;
-                        if ((penaltyWorkspace[workspaceIdx] >> bitPos) & (int32_t)1)
+                        if ((penaltyWorkspace[workspaceIdx] >> bitPos) & (int32_t) 1)
                         {
                             logit = logit < 0.0f ? logit * repetitionPenalty : logit / repetitionPenalty;
                         }
@@ -250,8 +250,8 @@ void invokeBatchApplyPenalty(InvokeBatchApplyPenaltyParams<T> const& params)
     batchApplyPenalty<T><<<grid, block, 0, params.stream>>>(params.inputLogits, params.outputLogits, params.biases,
         params.penaltyWorkspace, params.penaltyWorkspacePrev, params.temperatures, params.repetitionPenalties,
         params.presencePenalties, params.frequencyPenalties, params.ngramPenalty, params.maxSeqLen, params.vocabSize,
-        params.vocabSizePadded, params.outputIdsPtr, params.parentIdsPtr, params.inputLengths, params.sequenceLengths, params.minLengths,
-        params.endIds, params.batchSlots, params.tokensPerStep, params.finished);
+        params.vocabSizePadded, params.outputIdsPtr, params.parentIdsPtr, params.inputLengths, params.sequenceLengths,
+        params.minLengths, params.endIds, params.batchSlots, params.tokensPerStep, params.finished);
 }
 
 template void invokeBatchApplyPenalty(InvokeBatchApplyPenaltyParams<float> const& params);

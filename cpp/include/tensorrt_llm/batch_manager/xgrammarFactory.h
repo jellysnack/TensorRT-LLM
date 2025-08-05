@@ -8,28 +8,30 @@ class GrammarCompiler;
 
 namespace tensorrt_llm::batch_manager
 {
-    class XGrammarMatcher final : public IGrammarMatcher {
-    public:
-        explicit XGrammarMatcher(std::shared_ptr<xgrammar::GrammarMatcher> grammarMatcher);
+class XGrammarMatcher final : public IGrammarMatcher
+{
+public:
+    explicit XGrammarMatcher(std::shared_ptr<xgrammar::GrammarMatcher> grammarMatcher);
 
-        bool AcceptToken(int32_t tokenId) override;
-        void FillNextTokenBitmask(DLTensor* nextTokenBitmask) override;
+    bool AcceptToken(int32_t tokenId) override;
+    void FillNextTokenBitmask(DLTensor* nextTokenBitmask) override;
 
-    private:
-        std::shared_ptr<xgrammar::GrammarMatcher> mGrammarMatcher;
-    };
+private:
+    std::shared_ptr<xgrammar::GrammarMatcher> mGrammarMatcher;
+};
 
-    class XGrammarMatcherFactory final : public IGrammarMatcherFactory {
-    public:
-        using SizeType32 = tensorrt_llm::runtime::SizeType32;
+class XGrammarMatcherFactory final : public IGrammarMatcherFactory
+{
+public:
+    using SizeType32 = tensorrt_llm::runtime::SizeType32;
 
-        XGrammarMatcherFactory(tensorrt_llm::executor::GuidedDecodingConfig const& guidedDecodingConfig,
-                               SizeType32 vocabSizePadded);
+    XGrammarMatcherFactory(
+        tensorrt_llm::executor::GuidedDecodingConfig const& guidedDecodingConfig, SizeType32 vocabSizePadded);
 
-        std::shared_ptr<IGrammarMatcher> Create(tensorrt_llm::executor::GuidedDecodingParams::GuideType guideType,
-                                                std::optional<std::string> guide = std::nullopt) override;
-    
-    private:
-        std::shared_ptr<xgrammar::GrammarCompiler> mXGrammarCompiler;
-    };
+    std::shared_ptr<IGrammarMatcher> Create(tensorrt_llm::executor::GuidedDecodingParams::GuideType guideType,
+        std::optional<std::string> guide = std::nullopt) override;
+
+private:
+    std::shared_ptr<xgrammar::GrammarCompiler> mXGrammarCompiler;
+};
 } // namespace tensorrt_llm::batch_manager

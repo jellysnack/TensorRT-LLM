@@ -72,7 +72,7 @@ void PenaltyLayer<T>::initialize()
         allocateWorkspace();
     }
 
-    const char* env = std::getenv("TRTLLM_NGRAM_PENALTY");
+    char const* env = std::getenv("TRTLLM_NGRAM_PENALTY");
     if (env && std::string(env) == "true")
     {
         mUseNgramPenalty = true;
@@ -337,21 +337,13 @@ void PenaltyLayer<T>::forwardAsync(std::shared_ptr<BaseDecodingOutputs> const& b
     if (mUseNgramPenalty)
     {
         TLLM_CHECK_WITH_INFO(localDecoderDomain.getBeamWidth() == 1, "ngram penalty does not support beam size > 1");
-        TLLM_CHECK_WITH_INFO(
-            localDecoderDomain.getMaxDecodingTokens() == 1,
-            "ngram penalty kernel suppose that maxDecodingSteps == 1 (watch penaltyWorkspace indexing in it)"
-        );
+        TLLM_CHECK_WITH_INFO(localDecoderDomain.getMaxDecodingTokens() == 1,
+            "ngram penalty kernel suppose that maxDecodingSteps == 1 (watch penaltyWorkspace indexing in it)");
         if (repetitionPenalties)
         {
-            invokeNgramPenalty(penaltyParams.penaltyWorkspace,
-                               penaltyParams.inputLengths,
-                               penaltyParams.sequenceLengths,
-                               penaltyParams.outputIdsPtr,
-                               penaltyParams.finished,
-                               penaltyParams.batchSlots,
-                               penaltyParams.batchSize,
-                               penaltyParams.vocabSize,
-                               penaltyParams.stream);
+            invokeNgramPenalty(penaltyParams.penaltyWorkspace, penaltyParams.inputLengths,
+                penaltyParams.sequenceLengths, penaltyParams.outputIdsPtr, penaltyParams.finished,
+                penaltyParams.batchSlots, penaltyParams.batchSize, penaltyParams.vocabSize, penaltyParams.stream);
             sync_check_cuda_error(penaltyParams.stream);
         }
     }
