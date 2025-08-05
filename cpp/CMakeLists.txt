@@ -211,15 +211,11 @@ endif()
 set(LLG_DIR "${3RDPARTY_DIR}/llguidance")
 set(LLG_LIB_PATH "${3RDPARTY_DIR}/llguidance/target/release/libllguidance.a")
 add_custom_command(
-    OUTPUT "${LLG_LIB_PATH}"
-    WORKING_DIRECTORY "${LLG_DIR}/parser"
-    COMMAND cargo build --release
-    COMMENT "Building LLGuidance static library"
-)
-add_custom_target(
-    build_llglib ALL
-    DEPENDS "${LLG_LIB_PATH}"
-)
+  OUTPUT "${LLG_LIB_PATH}"
+  WORKING_DIRECTORY "${LLG_DIR}/parser"
+  COMMAND cargo build --release
+  COMMENT "Building LLGuidance static library")
+add_custom_target(build_llglib ALL DEPENDS "${LLG_LIB_PATH}")
 
 # include as system to suppress warnings
 include_directories(

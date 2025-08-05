@@ -1229,7 +1229,8 @@ void WindowBlockManager::storeBlocks(
     bool needMatch = true;
 
     // cache reuse out-of-range workaround
-    if (blockKeys.size() != blockIds.size()) {
+    if (blockKeys.size() != blockIds.size())
+    {
         return;
     }
     auto numBlocks = blockKeys.size();

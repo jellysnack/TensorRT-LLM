@@ -26,18 +26,21 @@
 namespace tensorrt_llm::batch_manager
 {
 
-class IGrammarMatcher {
+class IGrammarMatcher
+{
 public:
     virtual ~IGrammarMatcher() = default;
     virtual bool AcceptToken(int32_t tokenId) = 0;
     virtual void FillNextTokenBitmask(DLTensor* nextTokenBitmask) = 0;
 };
 
-class IGrammarMatcherFactory {
+class IGrammarMatcherFactory
+{
 public:
     virtual ~IGrammarMatcherFactory() = default;
     virtual std::shared_ptr<IGrammarMatcher> Create(tensorrt_llm::executor::GuidedDecodingParams::GuideType guideType,
-                                                    std::optional<std::string> guide = std::nullopt) = 0;
+        std::optional<std::string> guide = std::nullopt)
+        = 0;
 };
 
 class GuidedDecoder

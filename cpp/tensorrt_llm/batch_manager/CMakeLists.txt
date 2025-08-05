@@ -85,8 +85,7 @@ target_include_directories(
   ${BATCH_MANAGER_STATIC_TARGET}
   PUBLIC ${3RDPARTY_DIR}/xgrammar/3rdparty/picojson
          ${3RDPARTY_DIR}/xgrammar/3rdparty/dlpack/include
-         ${3RDPARTY_DIR}/xgrammar/include
-         ${3RDPARTY_DIR}/llguidance/parser)
+         ${3RDPARTY_DIR}/xgrammar/include ${3RDPARTY_DIR}/llguidance/parser)
 
 set_target_properties(
   ${BATCH_MANAGER_STATIC_TARGET}

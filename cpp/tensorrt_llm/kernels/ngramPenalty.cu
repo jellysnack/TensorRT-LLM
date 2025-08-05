@@ -9,13 +9,9 @@ namespace tensorrt_llm
 namespace kernels
 {
 
-__global__ void calc_ngram_penalty(TokenIdType* workspace,
-                                   SizeType32 const* inputLengths,
-                                   SizeType32 const* sequenceLengths,
-                                   TokenIdType const** outputIdsPtr,
-                                   FinishedState const* finished,
-                                   SizeType32 const* batchSlots,
-                                   SizeType32 vocabSize)
+__global__ void calc_ngram_penalty(TokenIdType* workspace, SizeType32 const* inputLengths,
+    SizeType32 const* sequenceLengths, TokenIdType const** outputIdsPtr, FinishedState const* finished,
+    SizeType32 const* batchSlots, SizeType32 vocabSize)
 {
     SizeType32 constexpr maxNgramSize = 4;
     SizeType32 constexpr numNgrams = 4;
@@ -64,7 +60,7 @@ __global__ void calc_ngram_penalty(TokenIdType* workspace,
 
         __syncthreads();
 
-        #pragma unroll
+#pragma unroll
         for (SizeType32 i = 0; i < numNgrams; ++i)
         {
             if (currTokenIdx > sequenceLength - ngramSizes[i])
@@ -74,8 +70,8 @@ __global__ void calc_ngram_penalty(TokenIdType* workspace,
 
             bool ngramMatch = true;
 
-            // in case of ngram size = 1 we will not run the for loop
-            #pragma unroll
+// in case of ngram size = 1 we will not run the for loop
+#pragma unroll
             for (SizeType32 ngramIdx = 0; ngramIdx < ngramSizes[i] - 1; ++ngramIdx)
             {
                 if (sharedTokens[threadIdx.x + ngramIdx] != lastTokens[maxNgramSize - ngramSizes[i] + ngramIdx])
@@ -90,41 +86,29 @@ __global__ void calc_ngram_penalty(TokenIdType* workspace,
             {
                 SizeType32 const workspaceIdx = batchIdx * vocabSize + tokenIdx;
                 int32_t const bitPos = ngramSizes[i] - 1;
-                atomicOr(&workspace[workspaceIdx], (int32_t)1 << bitPos);
+                atomicOr(&workspace[workspaceIdx], (int32_t) 1 << bitPos);
             }
         }
     }
 }
 
-void invokeNgramPenalty(TokenIdType* workspace,
-                        SizeType32 const* inputLengths,
-                        SizeType32 const* sequenceLengths,
-                        TokenIdType const** outputIdsPtr,
-                        FinishedState const* finished,
-                        SizeType32 const* batchSlot,
-                        SizeType32 batchSize,
-                        SizeType32 vocabSize,
-                        cudaStream_t stream)
+void invokeNgramPenalty(TokenIdType* workspace, SizeType32 const* inputLengths, SizeType32 const* sequenceLengths,
+    TokenIdType const** outputIdsPtr, FinishedState const* finished, SizeType32 const* batchSlot, SizeType32 batchSize,
+    SizeType32 vocabSize, cudaStream_t stream)
 {
     TLLM_CHECK_WITH_INFO(workspace, "no workspace provided for ngram penalty");
 
     constexpr SizeType32 maxNgramSize = 4;
-    
+
     dim3 block(1024);
     dim3 grid(batchSize);
 
     cudaMemsetAsync(workspace, 0, batchSize * vocabSize * sizeof(TokenIdType), stream);
 
-    // allocate shared memory of [blockDim + 2*(maxNgramSize - 1)] size, 
+    // allocate shared memory of [blockDim + 2*(maxNgramSize - 1)] size,
     // where 2*(maxNgramSize - 1) is for boundary token's ngram and for most recent generated tokens
     calc_ngram_penalty<<<grid, block, (block.x + 2 * (maxNgramSize - 1)) * sizeof(TokenIdType), stream>>>(
-        workspace,
-        inputLengths,
-        sequenceLengths,
-        outputIdsPtr,
-        finished,
-        batchSlot,
-        vocabSize);
+        workspace, inputLengths, sequenceLengths, outputIdsPtr, finished, batchSlot, vocabSize);
 }
 
 } // namespace kernels
