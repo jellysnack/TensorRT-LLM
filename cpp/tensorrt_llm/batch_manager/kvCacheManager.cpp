@@ -1327,6 +1327,11 @@ void WindowBlockManager::storeBlocks(
     auto searchRoot = mCachedBlocksRoot;
     bool needMatch = true;
 
+    // cache reuse out-of-range workaround
+    if (blockKeys.size() != blockIds.size())
+    {
+        return;
+    }
     auto numBlocks = blockKeys.size();
     std::vector<BlockPtr> storedBlocks;
     for (std::size_t blockCnt = 0; blockCnt < numBlocks; ++blockCnt)
