@@ -131,7 +131,8 @@ void GuidedDecoder::execute(DecoderInputBuffers const& decoderInputBuffers, Buff
         mCopyBufferManager.getStream().record(event);
         stream.wait(event);
 
-        if (!decoderInputBuffers.decoderRequests.empty()) {
+        if (!decoderInputBuffers.decoderRequests.empty())
+        {
             SizeType32 batchIdx{0};
             for (size_t requestIdx = 0; requestIdx < decoderInputBuffers.decoderRequests.size(); ++requestIdx)
             {
