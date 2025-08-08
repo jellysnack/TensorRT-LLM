@@ -16,6 +16,7 @@
  */
 
 #include "tensorrt_llm/batch_manager/guidedDecoder.h"
+#include "tensorrt_llm/batch_manager/decoderBuffers.h"
 #include "tensorrt_llm/batch_manager/llguidanceFactory.h"
 #include "tensorrt_llm/batch_manager/llmRequest.h"
 #include "tensorrt_llm/batch_manager/xgrammarFactory.h"
@@ -130,50 +131,52 @@ void GuidedDecoder::execute(DecoderInputBuffers const& decoderInputBuffers, Buff
         mCopyBufferManager.getStream().record(event);
         stream.wait(event);
 
-        SizeType32 batchIdx{0};
-        for (size_t requestIdx = 0; requestIdx < decoderInputBuffers.decoderRequests.size(); ++requestIdx)
-        {
-            auto const& llmReq = decoderInputBuffers.decoderRequests.at(requestIdx);
-
-            auto const& guidedDecodingParams = llmReq->getGuidedDecodingParams();
-            if (guidedDecodingParams.has_value())
+        if (!decoderInputBuffers.decoderRequests.empty()) {
+            SizeType32 batchIdx{0};
+            for (size_t requestIdx = 0; requestIdx < decoderInputBuffers.decoderRequests.size(); ++requestIdx)
             {
-                auto const seqSlot = llmReq->mSeqSlot.value();
+                auto const& llmReq = decoderInputBuffers.decoderRequests.at(requestIdx);
 
-                auto const& logits = decoderInputBuffers.logits.at(requestIdx);
-                auto const logitsBitmask = ITensor::at(mLogitsBitmask, {seqSlot});
+                auto const& guidedDecodingParams = llmReq->getGuidedDecodingParams();
+                if (guidedDecodingParams.has_value())
+                {
+                    auto const seqSlot = llmReq->mSeqSlot.value();
 
-                // Use void* to unify the code for different mLogitsDtype
-                *reinterpret_cast<void**>(ITensor::at(mLogitsPtrVecHost, {batchIdx})->data()) = logits->data();
-                *reinterpret_cast<void**>(ITensor::at(mLogitsBitmaskPtrVecHost, {batchIdx})->data())
-                    = logitsBitmask->data();
+                    auto const& logits = decoderInputBuffers.logits.at(requestIdx);
+                    auto const logitsBitmask = ITensor::at(mLogitsBitmask, {seqSlot});
 
-                ++batchIdx;
+                    // Use void* to unify the code for different mLogitsDtype
+                    *reinterpret_cast<void**>(ITensor::at(mLogitsPtrVecHost, {batchIdx})->data()) = logits->data();
+                    *reinterpret_cast<void**>(ITensor::at(mLogitsBitmaskPtrVecHost, {batchIdx})->data())
+                        = logitsBitmask->data();
+
+                    ++batchIdx;
+                }
             }
-        }
-        if (batchIdx > 0)
-        {
-            runtimeBufferManager.copy(
-                *ITensor::slice(mLogitsPtrVecHost, 0, batchIdx), *ITensor::slice(mLogitsPtrVec, 0, batchIdx));
-            runtimeBufferManager.copy(*ITensor::slice(mLogitsBitmaskPtrVecHost, 0, batchIdx),
-                *ITensor::slice(mLogitsBitmaskPtrVec, 0, batchIdx));
+            if (batchIdx > 0)
+            {
+                runtimeBufferManager.copy(
+                    *ITensor::slice(mLogitsPtrVecHost, 0, batchIdx), *ITensor::slice(mLogitsPtrVec, 0, batchIdx));
+                runtimeBufferManager.copy(*ITensor::slice(mLogitsBitmaskPtrVecHost, 0, batchIdx),
+                    *ITensor::slice(mLogitsBitmaskPtrVec, 0, batchIdx));
 
-            auto logitsBitmaskPtrVec = bufferCast<BitmaskT const*>(*mLogitsBitmaskPtrVec);
-            if (mLogitsDtype == nvinfer1::DataType::kFLOAT)
-            {
-                auto logitsPtrVec = bufferCast<float*>(*mLogitsPtrVec);
-                tensorrt_llm::kernels::invokeLogitsBitmask<float>(
-                    logitsPtrVec, logitsBitmaskPtrVec, batchIdx, mVocabSizePadded, stream.get());
-            }
-            else if (mLogitsDtype == nvinfer1::DataType::kHALF)
-            {
-                auto logitsPtrVec = bufferCast<half*>(*mLogitsPtrVec);
-                tensorrt_llm::kernels::invokeLogitsBitmask<half>(
-                    logitsPtrVec, logitsBitmaskPtrVec, batchIdx, mVocabSizePadded, stream.get());
-            }
-            else
-            {
-                TLLM_THROW("Unsupported logits data type.");
+                auto logitsBitmaskPtrVec = bufferCast<BitmaskT const*>(*mLogitsBitmaskPtrVec);
+                if (mLogitsDtype == nvinfer1::DataType::kFLOAT)
+                {
+                    auto logitsPtrVec = bufferCast<float*>(*mLogitsPtrVec);
+                    tensorrt_llm::kernels::invokeLogitsBitmask<float>(
+                        logitsPtrVec, logitsBitmaskPtrVec, batchIdx, mVocabSizePadded, stream.get());
+                }
+                else if (mLogitsDtype == nvinfer1::DataType::kHALF)
+                {
+                    auto logitsPtrVec = bufferCast<half*>(*mLogitsPtrVec);
+                    tensorrt_llm::kernels::invokeLogitsBitmask<half>(
+                        logitsPtrVec, logitsBitmaskPtrVec, batchIdx, mVocabSizePadded, stream.get());
+                }
+                else
+                {
+                    TLLM_THROW("Unsupported logits data type.");
+                }
             }
         }
     }
